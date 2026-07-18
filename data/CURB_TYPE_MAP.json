@@ -1,0 +1,8 @@
+{
+  "NO PARKING": {
+    "ON_ROADWAY": "NO"
+  },
+  "MEDIAN CURB": {
+    "ON_ROADWAY": "YES"
+  }
+}

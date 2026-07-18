@@ -1,0 +1,146 @@
+{
+  "1": {
+    "COLOR": "YELLOW",
+    "MUTCD": "TRAFFIC LINES",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "5": {
+    "COLOR": "YELLOW",
+    "MUTCD": "TRAFFIC LINES",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "6": {
+    "COLOR": "YELLOW",
+    "MUTCD": "TRAFFIC LINES",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "8": {
+    "COLOR": "WHITE",
+    "MUTCD": "TRAFFIC LINES",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "9": {
+    "COLOR": "WHITE",
+    "MUTCD": "TRAFFIC LINES",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "11": {
+    "COLOR": "WHITE",
+    "MUTCD": "TRAFFIC LINES",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "18": {
+    "COLOR": "YELLOW",
+    "MUTCD": "TRAFFIC LINES",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "19": {
+    "COLOR": "YELLOW",
+    "MUTCD": "TRAFFIC LINES",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "21": {
+    "COLOR": "YELLOW",
+    "MUTCD": "TRAFFIC LINES",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "22": {
+    "COLOR": "YELLOW",
+    "MUTCD": "TRAFFIC LINES",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "24": {
+    "COLOR": "YELLOW",
+    "MUTCD": "LEFT EDGE LANE",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "25": {
+    "COLOR": "YELLOW",
+    "MUTCD": "TRAFFIC LINES",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "36": {
+    "COLOR": "WHITE",
+    "MUTCD": "EXIT RAMP NEUTRAL AREA (GORE) TREATMENT",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "38": {
+    "COLOR": "WHITE",
+    "MUTCD": "CHANNELIZING LINE",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "39": {
+    "COLOR": "WHITE",
+    "MUTCD": "BIKE LANE LINE",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "40": {
+    "COLOR": "WHITE",
+    "MUTCD": "TRAFFIC LINES",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "41": {
+    "COLOR": "YELLOW",
+    "MUTCD": "TRAFFIC LINES",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "25A": {
+    "COLOR": "YELLOW",
+    "MUTCD": "TRAFFIC LINES",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "27B": {
+    "COLOR": "WHITE",
+    "MUTCD": "RIGHT EDGE LANE",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "37B": {
+    "COLOR": "WHITE",
+    "MUTCD": "TRAFFIC LINES",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "38A": {
+    "COLOR": "WHITE",
+    "MUTCD": "CHANNELIZING LINE",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "39A": {
+    "COLOR": "WHITE",
+    "MUTCD": "INTERSECTION LINE BIKE LANE",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "SKIPPED GREEN BICYCLE PATH": {
+    "COLOR": "WHITE",
+    "MUTCD": "PAVEMENT MARKING",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  },
+  "N-STD": {
+    "COLOR": "WHITE",
+    "MUTCD": "TURN LANE",
+    "MATERIAL": "THERMO-PLASTIC",
+    "ON_ROADWAY": "YES"
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "ST_ID": [
+    "163",
+    "201",
+    "305"
+  ],
+  "STREET_NAME": [
+    "MAIN ST",
+    "ELM ST",
+    "PARK AVE"
+  ],
+  "PAVEMENT_MARKING_TYPE": [
+    "1",
+    "5",
+    "6",
+    "8",
+    "9",
+    "11",
+    "18",
+    "19",
+    "21",
+    "22",
+    "24",
+    "25",
+    "36",
+    "38",
+    "39",
+    "40",
+    "41",
+    "25A",
+    "27B",
+    "37B",
+    "38A",
+    "39A",
+    "SKIPPED GREEN BICYCLE PATH",
+    "N-STD"
+  ],
+  "MARKING_CONDITION": [
+    "GOOD",
+    "FAIR",
+    "POOR",
+    "FADED",
+    "DAMAGED",
+    "WORN",
+    "MISSING"
+  ],
+  "LM_ID": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10"
+  ]
+}

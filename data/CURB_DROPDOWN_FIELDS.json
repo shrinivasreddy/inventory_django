@@ -1,0 +1,11 @@
+[
+  "ST_ID",
+  "STREET_NAME",
+  "CURB_MARKING",
+  "COLOR",
+  "MARKING_CONDITION",
+  "MATERIAL",
+  "ROADWAY_DIRECTION",
+  "INSP_DT",
+  "CM_ID"
+]

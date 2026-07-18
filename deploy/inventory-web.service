@@ -1,0 +1,19 @@
+# systemd unit file for Inventory Web (Django). See install steps in the
+# original comments -- same pattern as the Flask version, just pointing
+# at serve.py (which runs the Django app through waitress).
+
+[Unit]
+Description=Inventory Web - Django (Sign/Pavement/Lane/Curb inventory app)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/inventory_django
+ExecStart=/usr/bin/python3 /opt/inventory_django/serve.py
+Restart=always
+RestartSec=5
+User=www-data
+EnvironmentFile=/opt/inventory_django/.env
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,58 @@
+{
+  "ST_ID": [
+    "163",
+    "201",
+    "305"
+  ],
+  "STREET_NAME": [
+    "MAIN ST",
+    "ELM ST",
+    "PARK AVE"
+  ],
+  "CURB_MARKING": [
+    "NO PARKING",
+    "MEDIAN CURB"
+  ],
+  "COLOR": [
+    "RED",
+    "YELLOW",
+    "BLUE",
+    "GREEN",
+    "WHITE",
+    "GREY",
+    "BLACK",
+    "BLACK & WHITE"
+  ],
+  "MARKING_CONDITION": [
+    "GOOD",
+    "FAIR",
+    "POOR",
+    "FADED",
+    "DAMAGED",
+    "WORN",
+    "MISSING"
+  ],
+  "ROADWAY_DIRECTION": [
+    "EAST",
+    "WEST",
+    "NORTH",
+    "SOUTH"
+  ],
+  "INSP_DT": [],
+  "CM_ID": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10"
+  ],
+  "MATERIAL": [
+    "PAINT",
+    "RUBBER ISLAND"
+  ]
+}

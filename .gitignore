@@ -1,0 +1,31 @@
+# Environment / secrets
+.env
+
+# Database
+db.sqlite3
+db.sqlite3-journal
+
+# Django
+staticfiles/
+logs/
+media/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.Python
+env/
+venv/
+.venv/
+
+# Deploy artifacts (generated at runtime, not source)
+deploy/service_stdout.log
+deploy/service_stderr.log
+deploy/nssm.exe
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

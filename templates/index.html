@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Inventory Web</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #0f172a; color: #e5e7eb;
+    font-family: 'Segoe UI', Arial, sans-serif; }
+
+  #tabbar { display: flex; gap: 4px; background: #050a14; padding: 8px 16px 0; }
+  #tabbar button {
+    background: #1e293b; color: #9ca3af; border: 1px solid #334155; border-bottom: none;
+    border-radius: 8px 8px 0 0; padding: 10px 18px; font-size: 13px; font-weight: bold; cursor: pointer;
+  }
+  #tabbar button.active { background: #111827; color: #4ade80; border-color: #4ade80; }
+
+  #banner { padding: 16px 24px; background: #111827; border-bottom: 2px solid #334155;
+    display: flex; justify-content: space-between; align-items: center; }
+  #banner h1 { margin: 0; font-size: 20px; color: #4ade80; }
+  #banner p { margin: 4px 0 0; font-size: 13px; color: #9ca3af; }
+  #export-all-btn { background: #7c3aed; color: #fff; border: none; border-radius: 6px;
+    padding: 10px 16px; font-size: 12px; font-weight: bold; cursor: pointer; }
+
+  #layout { display: flex; gap: 16px; padding: 16px; align-items: flex-start; }
+
+  #form-panel { width: 420px; flex-shrink: 0; background: #1e293b; border-radius: 10px;
+    padding: 16px; border: 1px solid #334155; }
+  #form-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  .field-wrap { display: flex; flex-direction: column; gap: 3px; }
+  .field-wrap.wide { grid-column: 1 / -1; }
+  .field-wrap label { font-size: 11px; color: #9ca3af; font-weight: bold; text-transform: uppercase; }
+  .field-row { display: flex; gap: 6px; }
+  .field-row input, .field-row select { flex: 1; min-width: 0; }
+  input[type=text], input[type=date], input[type=number], select {
+    background: #0f172a; border: 1px solid #475569; border-radius: 6px; color: #fff;
+    padding: 8px; font-size: 13px;
+  }
+  /* The default date-picker calendar icon renders dark-on-dark and is nearly
+     invisible against this theme's background. color-scheme tells the browser
+     to render native form controls (including the calendar icon/popup) using
+     a light-appropriate palette; the webkit filter is extra reinforcement for
+     Chrome/Edge/Safari, tinting the icon to the app's green accent color. */
+  input[type=date] { color-scheme: dark; }
+  input[type=date]::-webkit-calendar-picker-indicator {
+    filter: invert(70%) sepia(50%) saturate(500%) hue-rotate(78deg) brightness(105%);
+    cursor: pointer;
+    opacity: 1;
+  }
+  input:focus, select:focus { outline: none; border-color: #4ade80; }
+  .add-opt-btn {
+    background: #334155; border: 1px solid #4ade80; color: #4ade80; border-radius: 6px;
+    width: 34px; font-size: 15px; cursor: pointer; font-weight: bold;
+  }
+  .add-opt-btn:hover { background: #4ade80; color: #0f172a; }
+  .auto-field {
+    background: #0b1220; border: 1px dashed #475569; border-radius: 6px; color: #4ade80;
+    padding: 8px; font-size: 13px; font-weight: bold; min-height: 34px; display: flex; align-items: center;
+  }
+  .hidden { display: none !important; }
+
+  #form-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  #form-actions button {
+    flex: 1; min-width: 100px; padding: 10px; border-radius: 6px; font-weight: bold;
+    font-size: 12px; cursor: pointer; border: none;
+  }
+  #add-btn { background: #4ade80; color: #0f172a; }
+  #update-btn { background: #1d4ed8; color: #fff; }
+  #delete-btn { background: #b91c1c; color: #fff; }
+  #clear-btn { background: #334155; color: #e5e7eb; }
+  #export-btn { background: #f59e0b; color: #000; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  #status { margin-top: 10px; font-size: 12px; color: #9ca3af; min-height: 16px; }
+
+  #table-panel { flex: 1; background: #1e293b; border-radius: 10px; padding: 16px; border: 1px solid #334155; min-width: 0; }
+  #search-row { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
+  #search-row input { flex: 1; }
+  #record-count { font-size: 12px; color: #9ca3af; white-space: nowrap; }
+
+  #table-scroll { overflow: auto; max-height: 74vh; border: 1px solid #334155; border-radius: 8px; }
+  table { border-collapse: collapse; width: max-content; min-width: 100%; font-size: 12px; }
+  thead th {
+    background: #0f172a; color: #4ade80; position: sticky; top: 0; padding: 8px 10px;
+    text-align: left; border-bottom: 2px solid #334155; white-space: nowrap;
+  }
+  tbody td { padding: 6px 10px; border-bottom: 1px solid #263449; white-space: nowrap; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #263449; }
+  tbody tr.selected { background: #1d4ed8; color: #fff; }
+</style>
+</head>
+<body>
+
+<div id="tabbar"></div>
+
+<div id="banner">
+  <div>
+    <h1 id="banner-title">Loading...</h1>
+    <p id="banner-subtitle"></p>
+  </div>
+  <button id="export-all-btn">Export All Tabs</button>
+</div>
+
+<div id="layout">
+  <div id="form-panel">
+    <div id="form-grid"></div>
+    <div id="form-actions">
+      <button id="add-btn">Add Record</button>
+      <button id="update-btn" disabled>Update</button>
+      <button id="delete-btn" disabled>Delete</button>
+      <button id="clear-btn">Clear Form</button>
+      <button id="export-btn">Export to Excel</button>
+    </div>
+    <div id="status"></div>
+  </div>
+
+  <div id="table-panel">
+    <div id="search-row">
+      <input id="search-box" type="text" placeholder="Search records...">
+      <span id="record-count"></span>
+    </div>
+    <div id="table-scroll">
+      <table>
+        <thead><tr id="table-head"></tr></thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+var TABS = {{ tabs_json|safe }};
+var currentTabKey = TABS[0].key;
+
+var spec = null;
+var allRecords = [];
+var editingId = null;
+var nextIdPreview = 1;
+var fieldEls = {};
+var autoEls = {};
+
+function el(tag, attrs, children) {
+  var e = document.createElement(tag);
+  for (var k in (attrs || {})) {
+    if (k === 'text') e.textContent = attrs[k];
+    else e.setAttribute(k, attrs[k]);
+  }
+  (children || []).forEach(function (c) { e.appendChild(c); });
+  return e;
+}
+
+function isoToStored(iso) {
+  if (!iso) return '';
+  var parts = iso.split('-');
+  return parts.length === 3 ? parts[1] + '-' + parts[2] + '-' + parts[0] : iso;
+}
+function storedToIso(stored) {
+  if (!stored) return '';
+  var parts = stored.split('-');
+  return parts.length === 3 ? parts[2] + '-' + parts[0] + '-' + parts[1] : '';
+}
+
+// Ported from _on_latlong_paste: pasting a "lat, long" pair (e.g. copied
+// from Google Maps' right-click coordinates, or a tab-separated pair from
+// Excel) into a *LATITUDE field splits it automatically instead of leaving
+// the whole string in one box.
+//
+// Implementation note: this deliberately lets the browser's normal paste
+// happen first, then inspects the resulting field value on a 0ms timeout,
+// rather than trying to read clipboardData directly and preventDefault().
+// Reading clipboardData synchronously in the paste event is the more
+// fragile of the two common approaches -- inspecting the value afterward
+// sidesteps clipboard-API inconsistencies entirely and just asks "does
+// this field now contain something that looks like a coordinate pair?"
+function handleLatLongPaste(latInput, longField) {
+  setTimeout(function () {
+    var text = latInput.value.trim();
+    var parts = text.split(/[,\t]+|\s+/).map(function (p) { return p.trim(); }).filter(Boolean);
+    if (parts.length !== 2) return; // not a recognizable lat/long pair -- leave the paste as-is
+
+    var latVal = parts[0], longVal = parts[1];
+    if (isNaN(parseFloat(latVal)) || isNaN(parseFloat(longVal))) return; // not numeric -- leave as-is
+
+    latInput.value = latVal;
+    if (fieldEls[longField]) fieldEls[longField].value = longVal;
+    refreshAutoFields();
+  }, 0);
+}
+
+// ════════════════════════════════════════════
+//  TAB BAR
+// ════════════════════════════════════════════
+function buildTabBar() {
+  var bar = document.getElementById('tabbar');
+  bar.innerHTML = '';
+  TABS.forEach(function (t) {
+    var btn = el('button', { text: t.label });
+    if (t.key === currentTabKey) btn.classList.add('active');
+    btn.addEventListener('click', function () { switchTab(t.key); });
+    bar.appendChild(btn);
+  });
+}
+
+function switchTab(key) {
+  currentTabKey = key;
+  editingId = null;
+  buildTabBar();
+  loadSpecAndRecords();
+}
+
+// ════════════════════════════════════════════
+//  LOAD SPEC + BUILD FORM
+// ════════════════════════════════════════════
+function loadSpecAndRecords() {
+  fetch('/api/' + currentTabKey + '/spec').then(function (r) { return r.json(); }).then(function (s) {
+    spec = s;
+    document.getElementById('banner-title').textContent = spec.banner_title;
+    document.getElementById('banner-subtitle').textContent = spec.banner_subtitle;
+    buildForm();
+    buildTableHead();
+    loadRecords();
+  });
+}
+
+function buildForm() {
+  var grid = document.getElementById('form-grid');
+  grid.innerHTML = '';
+  fieldEls = {};
+  autoEls = {};
+
+  spec.columns.forEach(function (col) {
+    var wrap = el('div', { class: 'field-wrap' + (spec.wide_cols.includes(col) ? ' wide' : '') });
+    wrap.appendChild(el('label', { text: col.replace(/_/g, ' ') }));
+
+    var isConditional = spec.conditional_dropdowns && spec.conditional_dropdowns[col];
+
+    if (spec.auto_fields.includes(col)) {
+      var display = el('div', { class: 'auto-field', id: 'auto_' + col, text: '' });
+      wrap.appendChild(display);
+      autoEls[col] = display;
+
+      if (isConditional) {
+        // Exception (e.g. Lane's MUTCD when PAVEMENT_MARKING_TYPE == 27B):
+        // this field is normally auto-filled/read-only, but becomes a live
+        // dropdown when the driver field hits a trigger value.
+        var condSelect = el('select', { id: 'field_' + col });
+        condSelect.appendChild(el('option', { value: '' }));
+        isConditional.options.forEach(function (opt) {
+          condSelect.appendChild(el('option', { value: opt, text: opt }));
+        });
+        condSelect.classList.add('hidden');
+        wrap.appendChild(condSelect);
+        fieldEls[col] = condSelect;
+        condSelect.addEventListener('change', refreshAutoFields);
+      } else {
+        fieldEls[col] = null;
+      }
+    } else if (spec.date_fields.includes(col)) {
+      var dateInput = el('input', { type: 'date', id: 'field_' + col });
+      wrap.appendChild(dateInput);
+      fieldEls[col] = dateInput;
+    } else if (spec.dropdown_fields.includes(col)) {
+      var row = el('div', { class: 'field-row' });
+      var input = el('input', { type: 'text', id: 'field_' + col, list: 'list_' + col,
+        autocomplete: 'off', placeholder: 'Type or pick...' });
+      var datalist = el('datalist', { id: 'list_' + col });
+      (spec.options[col] || []).forEach(function (opt) {
+        datalist.appendChild(el('option', { value: opt }));
+      });
+      var addBtn = el('button', { type: 'button', class: 'add-opt-btn', text: '+' });
+      addBtn.addEventListener('click', function () { addDropdownOption(col); });
+      row.appendChild(input);
+      row.appendChild(datalist);
+      row.appendChild(addBtn);
+      wrap.appendChild(row);
+      fieldEls[col] = input;
+      input.addEventListener('input', function () { onFieldChanged(col); });
+    } else {
+      var textInput = el('input', { type: 'text', id: 'field_' + col });
+      wrap.appendChild(textInput);
+      fieldEls[col] = textInput;
+
+      // Google Maps / Excel-style coordinate paste: pasting a "lat, long"
+      // pair into a *LATITUDE field auto-splits it into that field and its
+      // matching *LONGITUDE field (LATITUDE/LONGITUDE, START_LATITUDE/
+      // START_LONGITUDE, etc.) -- ported from _on_latlong_paste.
+      if (col.endsWith('LATITUDE')) {
+        var longField = col.slice(0, -('LATITUDE'.length)) + 'LONGITUDE';
+        if (spec.columns.includes(longField)) {
+          textInput.addEventListener('paste', function () {
+            handleLatLongPaste(textInput, longField);
+          });
+        }
+      }
+    }
+
+    grid.appendChild(wrap);
+  });
+
+  applyDefaultFieldValues();
+  refreshAutoFields();
+}
+
+function applyDefaultFieldValues() {
+  var defaults = spec.default_field_values || {};
+  for (var f in defaults) {
+    if (fieldEls[f]) setVal(f, defaults[f]);
+  }
+}
+
+// ════════════════════════════════════════════
+//  AUTO FIELDS: live client-side preview (server recomputes authoritatively
+//  on save -- ported from _refresh_auto_fields)
+// ════════════════════════════════════════════
+function getVal(col) {
+  var e = fieldEls[col];
+  return e ? e.value.trim() : '';
+}
+function setVal(col, val) {
+  var e = fieldEls[col];
+  if (e) e.value = val;
+}
+
+function onFieldChanged(changedField) {
+  if (spec.mutcd_map && (changedField === 'MUTCD' || changedField === 'WORD_DESCRIPTION')) {
+    syncMutcdLink(changedField);
+  }
+  refreshAutoFields();
+}
+
+function syncMutcdLink(changedField) {
+  var mutcdCode = getVal('MUTCD');
+  var wordDesc = getVal('WORD_DESCRIPTION');
+  if (changedField === 'MUTCD') {
+    if (mutcdCode && spec.mutcd_reverse_map[mutcdCode]) setVal('WORD_DESCRIPTION', spec.mutcd_reverse_map[mutcdCode]);
+    else if (mutcdCode) setVal('WORD_DESCRIPTION', '');
+  } else if (wordDesc && spec.mutcd_map[wordDesc]) {
+    setVal('MUTCD', spec.mutcd_map[wordDesc].MUTCD || '');
+  }
+}
+
+function refreshAutoFields() {
+  if (!spec) return;
+
+  if (autoEls['ID'] && editingId === null) autoEls['ID'].textContent = String(nextIdPreview);
+
+  var parts = spec.uid_parts.map(function (f) { return getVal(f); });
+  var uid = parts.every(function (p) { return p; }) ? spec.uid_prefix + '_' + parts.join('_') : '';
+  if (autoEls[spec.uid_field]) autoEls[spec.uid_field].textContent = uid;
+
+  if (spec.mutcd_to_class) {
+    var mutcdCode = getVal('MUTCD');
+    var wordDesc = getVal('WORD_DESCRIPTION');
+    var classification = '';
+    if (mutcdCode && spec.mutcd_to_class[mutcdCode]) classification = spec.mutcd_to_class[mutcdCode];
+    else if (wordDesc && spec.mutcd_map[wordDesc]) classification = spec.mutcd_map[wordDesc].MUTCD_CLASSIFICATION || '';
+    if (autoEls['MUTCD_CLASSIFICATION']) autoEls['MUTCD_CLASSIFICATION'].textContent = classification;
+  }
+
+  if (autoEls['LEVEL(R)']) autoEls['LEVEL(R)'].textContent = 'R';
+
+  // Generic driver -> dependent auto-fill preview (Pavement / Lane / Curb)
+  if (spec.auto_fill_map) {
+    var driverField = spec.auto_fill_map.driver_field;
+    var driverVal = getVal(driverField);
+    var mapped = spec.type_map[driverVal] || {};
+    var cond = spec.conditional_dropdowns || {};
+
+    spec.auto_fill_map.dependent_fields.forEach(function (depField) {
+      var trigger = cond[depField];
+      var isTriggered = trigger && trigger.trigger_values.includes(driverVal);
+
+      if (trigger) {
+        // Toggle between the read-only auto display and the live dropdown
+        var selectEl = fieldEls[depField];
+        var displayEl = autoEls[depField];
+        if (isTriggered) {
+          if (selectEl) selectEl.classList.remove('hidden');
+          if (displayEl) displayEl.classList.add('hidden');
+        } else {
+          if (selectEl) selectEl.classList.add('hidden');
+          if (displayEl) displayEl.classList.remove('hidden');
+          if (displayEl) displayEl.textContent = mapped[depField] || '';
+        }
+      } else if (autoEls[depField]) {
+        autoEls[depField].textContent = mapped[depField] || '';
+      }
+    });
+  }
+}
+
+// ════════════════════════════════════════════
+//  "+" ADD DROPDOWN OPTION  (ported from add_dropdown_option)
+// ════════════════════════════════════════════
+function addDropdownOption(field) {
+  var newVal = prompt('Enter a new value for ' + field.replace(/_/g, ' ') + ':');
+  if (!newVal || !newVal.trim()) return;
+  newVal = newVal.trim();
+  // Mirror the server's exact case handling for "does this already exist?"
+  // checks -- MUTCD is in preserve_case_fields, so it must NOT be uppercased
+  // here, or a code that already exists in a different case would look new.
+  var canonical = spec.preserve_case_fields.includes(field) ? newVal : newVal.toUpperCase();
+
+  var payload = { field: field, value: newVal };
+
+  if (spec.mutcd_to_class && field === 'MUTCD' && !(canonical in spec.mutcd_to_class)) {
+    payload.classification = prompt(
+      "Enter MUTCD_CLASSIFICATION for MUTCD code '" + newVal + "' (e.g. REGULATORY SIGN, WARNING SIGN, GUIDE SIGN):"
+    ) || '';
+  } else if (spec.mutcd_map && field === 'WORD_DESCRIPTION' && !(canonical in spec.mutcd_map)) {
+    var mutcdCode = prompt(
+      "Enter the MUTCD code that '" + newVal + "' corresponds to (optional). Leave blank if unknown."
+    ) || '';
+    payload.mutcd_code = mutcdCode.trim();
+    if (mutcdCode && !(mutcdCode.trim() in spec.mutcd_to_class)) {
+      payload.classification = prompt("Enter MUTCD_CLASSIFICATION for '" + mutcdCode.trim() + "':") || '';
+    }
+  } else if (spec.auto_fill_map && field === spec.auto_fill_map.driver_field
+             && !(canonical in spec.type_map)) {
+    spec.auto_fill_map.dependent_fields.forEach(function (depField) {
+      var label = (spec.auto_fill_map.prompt_labels[depField] || depField) + " '" + newVal + "':";
+      payload['dep_' + depField] = prompt(label) || '';
+    });
+  }
+
+  fetch('/api/' + currentTabKey + '/options', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+  }).then(function (r) { return r.json(); }).then(function (data) {
+    if (data.error) { alert(data.error); return; }
+
+    spec.options[field] = data.options;
+    var datalist = document.getElementById('list_' + field);
+    if (datalist) {
+      datalist.innerHTML = '';
+      data.options.forEach(function (opt) { datalist.appendChild(el('option', { value: opt })); });
+    }
+    setVal(field, data.value);
+
+    if (data.mutcd_to_class_entry) spec.mutcd_to_class[data.mutcd_to_class_entry.code] = data.mutcd_to_class_entry.classification;
+    if (data.mutcd_map_entry) {
+      spec.mutcd_map[data.mutcd_map_entry.word] = {
+        MUTCD: data.mutcd_map_entry.MUTCD, MUTCD_CLASSIFICATION: data.mutcd_map_entry.MUTCD_CLASSIFICATION
+      };
+    }
+    if (data.mutcd_reverse_map) spec.mutcd_reverse_map = data.mutcd_reverse_map;
+    if (data.type_map_entry) spec.type_map[data.type_map_entry.driver_value] = data.type_map_entry.fields;
+
+    onFieldChanged(field);
+    setStatus('Added "' + data.value + '" to ' + field + '.');
+  }).catch(function (err) { alert('Failed to add option: ' + err.message); });
+}
+
+// ════════════════════════════════════════════
+//  RECORD CRUD
+// ════════════════════════════════════════════
+function collectRow() {
+  var row = {};
+  var cond = spec.conditional_dropdowns || {};
+  spec.columns.forEach(function (col) {
+    var isConditionalActive = cond[col] && fieldEls[col] && !fieldEls[col].classList.contains('hidden');
+    if (spec.auto_fields.includes(col) && !isConditionalActive) return; // server fills these in
+    row[col] = spec.date_fields.includes(col) ? isoToStored(getVal(col)) : getVal(col);
+  });
+  return row;
+}
+
+function setStatus(msg) { document.getElementById('status').textContent = msg; }
+
+document.getElementById('add-btn').addEventListener('click', function () {
+  fetch('/api/' + currentTabKey + '/records', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ row: collectRow() })
+  }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+    .then(function (res) {
+      if (!res.ok) { setStatus(res.data.error); return; }
+      allRecords.push(res.data.record);
+      nextIdPreview = res.data.next_id;
+      renderTable();
+      setStatus('Record ' + res.data.record.ID + ' added.');
+      clearForm(true);
+    });
+});
+
+document.getElementById('update-btn').addEventListener('click', function () {
+  if (editingId === null) return;
+  fetch('/api/' + currentTabKey + '/records/' + editingId, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ row: collectRow() })
+  }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+    .then(function (res) {
+      if (!res.ok) { setStatus(res.data.error); return; }
+      var idx = allRecords.findIndex(function (r) { return r.ID === editingId; });
+      if (idx !== -1) allRecords[idx] = res.data.record;
+      renderTable();
+      setStatus('Record ' + res.data.record.ID + ' updated.');
+      editingId = null;
+      clearForm(true);
+    });
+});
+
+document.getElementById('delete-btn').addEventListener('click', function () {
+  if (editingId === null) return;
+  if (!confirm('Delete record ' + editingId + '? This cannot be undone.')) return;
+  fetch('/api/' + currentTabKey + '/records/' + editingId, { method: 'DELETE' })
+    .then(function (r) { return r.json(); })
+    .then(function () {
+      editingId = null;
+      loadRecords();
+      setStatus('Record deleted.');
+      clearForm(false);
+    });
+});
+
+document.getElementById('clear-btn').addEventListener('click', function () { clearForm(false); });
+
+document.getElementById('export-btn').addEventListener('click', function () {
+  window.location.href = '/api/' + currentTabKey + '/export';
+});
+document.getElementById('export-all-btn').addEventListener('click', function () {
+  window.location.href = '/api/export_all';
+});
+
+function clearForm(keepSticky) {
+  var sticky = {};
+  if (keepSticky) spec.sticky_fields.forEach(function (f) { sticky[f] = getVal(f); });
+
+  spec.columns.forEach(function (col) {
+    if (spec.auto_fields.includes(col) && !(spec.conditional_dropdowns && spec.conditional_dropdowns[col])) return;
+    setVal(col, '');
+  });
+  applyDefaultFieldValues();
+  if (keepSticky) { for (var f in sticky) setVal(f, sticky[f]); }
+
+  editingId = null;
+  refreshAutoFields();
+  document.getElementById('update-btn').disabled = true;
+  document.getElementById('delete-btn').disabled = true;
+  document.querySelectorAll('#table-body tr').forEach(function (tr) { tr.classList.remove('selected'); });
+}
+
+function loadRecord(record) {
+  spec.columns.forEach(function (col) {
+    var cond = spec.conditional_dropdowns || {};
+    var isConditional = !!cond[col];
+    if (spec.auto_fields.includes(col) && !isConditional) return;
+    var val = record[col] || '';
+    setVal(col, spec.date_fields.includes(col) ? storedToIso(val) : val);
+  });
+  editingId = record.ID;
+  refreshAutoFields();
+  if (autoEls['ID']) autoEls['ID'].textContent = String(record.ID);
+  document.getElementById('update-btn').disabled = false;
+  document.getElementById('delete-btn').disabled = false;
+}
+
+// ════════════════════════════════════════════
+//  TABLE
+// ════════════════════════════════════════════
+function buildTableHead() {
+  var tr = document.getElementById('table-head');
+  tr.innerHTML = '';
+  spec.columns.forEach(function (col) { tr.appendChild(el('th', { text: col.replace(/_/g, ' ') })); });
+}
+
+function loadRecords() {
+  fetch('/api/' + currentTabKey + '/records').then(function (r) { return r.json(); }).then(function (data) {
+    allRecords = data.records;
+    nextIdPreview = data.next_id;
+    renderTable();
+    refreshAutoFields();
+  });
+}
+
+function renderTable() {
+  var query = document.getElementById('search-box').value.trim().toLowerCase();
+  var body = document.getElementById('table-body');
+  body.innerHTML = '';
+
+  var filtered = allRecords.filter(function (rec) {
+    if (!query) return true;
+    return spec.columns.some(function (c) { return String(rec[c] || '').toLowerCase().includes(query); });
+  });
+
+  filtered.forEach(function (rec) {
+    var tr = el('tr', { 'data-id': rec.ID });
+    if (rec.ID === editingId) tr.classList.add('selected');
+    spec.columns.forEach(function (col) { tr.appendChild(el('td', { text: rec[col] != null ? rec[col] : '' })); });
+    tr.addEventListener('click', function () {
+      document.querySelectorAll('#table-body tr').forEach(function (r) { r.classList.remove('selected'); });
+      tr.classList.add('selected');
+      loadRecord(rec);
+    });
+    body.appendChild(tr);
+  });
+
+  document.getElementById('record-count').textContent = filtered.length + ' of ' + allRecords.length + ' record(s)';
+}
+
+document.getElementById('search-box').addEventListener('input', renderTable);
+
+// ════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════
+buildTabBar();
+loadSpecAndRecords();
+</script>
+</body>
+</html>
