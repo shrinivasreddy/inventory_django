@@ -106,9 +106,19 @@ done in `inventory/admin.py`). To use it:
 ```bash
 python manage.py createsuperuser
 ```
-Then visit `/admin/` to browse and edit raw records directly -- handy for
-fixing a bad record without going through the form, though the main app UI
-is still the intended way to enter data day-to-day.
+Then visit `/admin/`, or use the **Admin Configuration** link shown in the
+application header for staff users.
+
+Inventory configuration is database-backed. JSON files under `data/` are
+one-time migration seeds; request handling does not read them. The admin has
+separate, searchable screens for section structure, dropdown options,
+auto-fill mappings, MUTCD descriptions, classifications, and fallbacks.
+Options can be filtered by section (Sign, Pavement, Lane, or Curb) and field.
+
+Only staff/admin users can modify reference configuration. Regular
+authenticated users can use inventory records but cannot access the admin or
+add reference options. Admin changes are read directly from the database and
+appear without editing JSON files.
 
 ## Deploying for your team (50 users)
 Same guidance as the Flask version, same reasoning:

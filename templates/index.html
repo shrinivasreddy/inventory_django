@@ -12,6 +12,7 @@
   #tabbar button {
     background: #1e293b; color: #9ca3af; border: 1px solid #334155; border-bottom: none;
     border-radius: 8px 8px 0 0; padding: 10px 18px; font-size: 13px; font-weight: bold; cursor: pointer;
+    transition: background-color .18s ease, color .18s ease, border-color .18s ease;
   }
   #tabbar button.active { background: #111827; color: #4ade80; border-color: #4ade80; }
 
@@ -26,6 +27,8 @@
   #logout-form { margin: 0; }
   #logout-btn { background: #334155; color: #fff; border: 1px solid #64748b; border-radius: 6px;
     padding: 9px 14px; font-size: 12px; font-weight: bold; cursor: pointer; }
+  #admin-link { background: #0f766e; color: #fff; border-radius: 6px; padding: 9px 14px;
+    font-size: 12px; font-weight: bold; text-decoration: none; text-align: center; }
 
   #layout { display: flex; gap: 16px; padding: 16px; align-items: flex-start; }
 
@@ -67,13 +70,25 @@
   #form-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
   #form-actions button {
     flex: 1; min-width: 100px; padding: 10px; border-radius: 6px; font-weight: bold;
-    font-size: 12px; cursor: pointer; border: none;
+    font-size: 12px; cursor: pointer; border: none; min-height: 42px;
+    transition: background-color .18s ease, transform .08s ease;
   }
   #add-btn { background: #4ade80; color: #0f172a; }
   #update-btn { background: #1d4ed8; color: #fff; }
   #delete-btn { background: #b91c1c; color: #fff; }
   #clear-btn { background: #334155; color: #e5e7eb; }
   #export-btn { background: #f59e0b; color: #000; }
+  #add-btn:hover { background: #86efac; }
+  #update-btn:hover { background: #2563eb; }
+  #delete-btn:hover { background: #dc2626; }
+  #clear-btn:hover, #logout-btn:hover { background: #475569; }
+  #export-btn:hover { background: #fbbf24; }
+  #export-all-btn:hover { background: #8b5cf6; }
+  #admin-link:hover { background: #0d9488; }
+  button:active, #admin-link:active { transform: translateY(1px); }
+  button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
+    outline: 3px solid #4ade8066; outline-offset: 2px;
+  }
   button:disabled { opacity: 0.4; cursor: not-allowed; }
 
   #status { margin-top: 10px; font-size: 12px; color: #9ca3af; min-height: 16px; }
@@ -107,7 +122,7 @@
     #banner { padding: 14px; }
     #banner-actions { align-items: stretch; }
     #current-user { width: 100%; overflow-wrap: anywhere; }
-    #export-all-btn, #logout-form, #logout-btn { width: 100%; }
+    #admin-link, #export-all-btn, #logout-form, #logout-btn { width: 100%; }
     #layout { padding: 10px; gap: 10px; }
     #form-panel, #table-panel { padding: 12px; border-radius: 8px; }
     #form-actions button { min-width: calc(50% - 4px); }
@@ -128,6 +143,9 @@
   </div>
   <div id="banner-actions">
     <span id="current-user">Signed in as {{ request.user.username }}</span>
+    {% if request.user.is_staff %}
+      <a id="admin-link" href="{% url 'admin:index' %}">Admin Configuration</a>
+    {% endif %}
     <button id="export-all-btn">Export All Tabs</button>
     <form id="logout-form" method="post" action="{% url 'logout' %}">
       {% csrf_token %}
@@ -311,7 +329,9 @@ function buildForm() {
         // dropdown when the driver field hits a trigger value.
         var condSelect = el('select', { id: 'field_' + col });
         condSelect.appendChild(el('option', { value: '' }));
-        isConditional.options.forEach(function (opt) {
+        isConditional.options.slice().sort(function (a, b) {
+          return String(a).localeCompare(String(b), undefined, { sensitivity: 'base' });
+        }).forEach(function (opt) {
           condSelect.appendChild(el('option', { value: opt, text: opt }));
         });
         condSelect.classList.add('hidden');
@@ -330,14 +350,18 @@ function buildForm() {
       var input = el('input', { type: 'text', id: 'field_' + col, list: 'list_' + col,
         autocomplete: 'off', placeholder: 'Type or pick...' });
       var datalist = el('datalist', { id: 'list_' + col });
-      (spec.options[col] || []).forEach(function (opt) {
+      (spec.options[col] || []).slice().sort(function (a, b) {
+        return String(a).localeCompare(String(b), undefined, { sensitivity: 'base' });
+      }).forEach(function (opt) {
         datalist.appendChild(el('option', { value: opt }));
       });
-      var addBtn = el('button', { type: 'button', class: 'add-opt-btn', text: '+' });
-      addBtn.addEventListener('click', function () { addDropdownOption(col); });
       row.appendChild(input);
       row.appendChild(datalist);
-      row.appendChild(addBtn);
+      if (spec.can_manage_configuration) {
+        var addBtn = el('button', { type: 'button', class: 'add-opt-btn', text: '+' });
+        addBtn.addEventListener('click', function () { addDropdownOption(col); });
+        row.appendChild(addBtn);
+      }
       wrap.appendChild(row);
       fieldEls[col] = input;
       input.addEventListener('input', function () { onFieldChanged(col); });

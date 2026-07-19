@@ -21,4 +21,6 @@ def password_reset_email_backend_check(app_configs, **kwargs):
 
 
 class InventoryConfig(AppConfig):
-    name = 'inventory'
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "inventory"
+    verbose_name = "Bluedome Inventory Configuration"
