@@ -19,8 +19,13 @@
     display: flex; justify-content: space-between; align-items: center; }
   #banner h1 { margin: 0; font-size: 20px; color: #4ade80; }
   #banner p { margin: 4px 0 0; font-size: 13px; color: #9ca3af; }
+  #banner-actions { display: flex; gap: 10px; align-items: center; }
+  #current-user { color: #cbd5e1; font-size: 12px; }
   #export-all-btn { background: #7c3aed; color: #fff; border: none; border-radius: 6px;
     padding: 10px 16px; font-size: 12px; font-weight: bold; cursor: pointer; }
+  #logout-form { margin: 0; }
+  #logout-btn { background: #334155; color: #fff; border: 1px solid #64748b; border-radius: 6px;
+    padding: 9px 14px; font-size: 12px; font-weight: bold; cursor: pointer; }
 
   #layout { display: flex; gap: 16px; padding: 16px; align-items: flex-start; }
 
@@ -88,6 +93,28 @@
   tbody tr { cursor: pointer; }
   tbody tr:hover { background: #263449; }
   tbody tr.selected { background: #1d4ed8; color: #fff; }
+
+  @media (max-width: 900px) {
+    #banner { align-items: flex-start; gap: 14px; flex-wrap: wrap; }
+    #banner-actions { width: 100%; flex-wrap: wrap; }
+    #layout { flex-direction: column; }
+    #form-panel, #table-panel { width: 100%; }
+    #table-scroll { max-height: 58vh; }
+  }
+  @media (max-width: 600px) {
+    #tabbar { padding: 8px 10px 0; overflow-x: auto; scrollbar-width: thin; }
+    #tabbar button { flex: 0 0 auto; padding: 9px 13px; }
+    #banner { padding: 14px; }
+    #banner-actions { align-items: stretch; }
+    #current-user { width: 100%; overflow-wrap: anywhere; }
+    #export-all-btn, #logout-form, #logout-btn { width: 100%; }
+    #layout { padding: 10px; gap: 10px; }
+    #form-panel, #table-panel { padding: 12px; border-radius: 8px; }
+    #form-actions button { min-width: calc(50% - 4px); }
+    #search-row { align-items: stretch; flex-direction: column; }
+    input[type=text], input[type=date], input[type=number], select { min-height: 42px; font-size: 16px; }
+    #table-scroll { max-height: 52vh; }
+  }
 </style>
 </head>
 <body>
@@ -99,7 +126,14 @@
     <h1 id="banner-title">Loading...</h1>
     <p id="banner-subtitle"></p>
   </div>
-  <button id="export-all-btn">Export All Tabs</button>
+  <div id="banner-actions">
+    <span id="current-user">Signed in as {{ request.user.username }}</span>
+    <button id="export-all-btn">Export All Tabs</button>
+    <form id="logout-form" method="post" action="{% url 'logout' %}">
+      {% csrf_token %}
+      <button id="logout-btn" type="submit">Log out</button>
+    </form>
+  </div>
 </div>
 
 <div id="layout">
@@ -130,6 +164,35 @@
 </div>
 
 <script>
+var csrfToken = '{{ csrf_token|escapejs }}';
+
+function jsonRequest(url, options) {
+  options = options || {};
+  options.headers = Object.assign({}, options.headers || {}, {
+    'Content-Type': 'application/json',
+    'X-CSRFToken': csrfToken
+  });
+  return fetch(url, options);
+}
+
+function parseApiResponse(response) {
+  if (response.status === 401) {
+    window.location.assign('{% url "login" %}?next=' + encodeURIComponent(window.location.pathname));
+    throw new Error('Your session has expired. Please log in again.');
+  }
+  return response.json().then(function (data) {
+    return { ok: response.ok, data: data };
+  });
+}
+
+function apiRequest(url, options) {
+  options = options || {};
+  var request = options.method && options.method !== 'GET'
+    ? jsonRequest(url, options)
+    : fetch(url, options);
+  return request.then(parseApiResponse);
+}
+
 var TABS = {{ tabs_json|safe }};
 var currentTabKey = TABS[0].key;
 
@@ -213,7 +276,9 @@ function switchTab(key) {
 //  LOAD SPEC + BUILD FORM
 // ════════════════════════════════════════════
 function loadSpecAndRecords() {
-  fetch('/api/' + currentTabKey + '/spec').then(function (r) { return r.json(); }).then(function (s) {
+  apiRequest('/api/' + currentTabKey + '/spec').then(function (res) {
+    if (!res.ok) throw new Error(res.data.error || 'Failed to load configuration.');
+    var s = res.data;
     spec = s;
     document.getElementById('banner-title').textContent = spec.banner_title;
     document.getElementById('banner-subtitle').textContent = spec.banner_subtitle;
@@ -424,9 +489,10 @@ function addDropdownOption(field) {
     });
   }
 
-  fetch('/api/' + currentTabKey + '/options', {
+  apiRequest('/api/' + currentTabKey + '/options', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-  }).then(function (r) { return r.json(); }).then(function (data) {
+  }).then(function (res) {
+    var data = res.data;
     if (data.error) { alert(data.error); return; }
 
     spec.options[field] = data.options;
@@ -468,25 +534,23 @@ function collectRow() {
 function setStatus(msg) { document.getElementById('status').textContent = msg; }
 
 document.getElementById('add-btn').addEventListener('click', function () {
-  fetch('/api/' + currentTabKey + '/records', {
+  apiRequest('/api/' + currentTabKey + '/records', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ row: collectRow() })
-  }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
-    .then(function (res) {
+  }).then(function (res) {
       if (!res.ok) { setStatus(res.data.error); return; }
       allRecords.push(res.data.record);
       nextIdPreview = res.data.next_id;
       renderTable();
       setStatus('Record ' + res.data.record.ID + ' added.');
       clearForm(true);
-    });
+    }).catch(function (err) { setStatus(err.message); });
 });
 
 document.getElementById('update-btn').addEventListener('click', function () {
   if (editingId === null) return;
-  fetch('/api/' + currentTabKey + '/records/' + editingId, {
+  apiRequest('/api/' + currentTabKey + '/records/' + editingId, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ row: collectRow() })
-  }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
-    .then(function (res) {
+  }).then(function (res) {
       if (!res.ok) { setStatus(res.data.error); return; }
       var idx = allRecords.findIndex(function (r) { return r.ID === editingId; });
       if (idx !== -1) allRecords[idx] = res.data.record;
@@ -494,20 +558,20 @@ document.getElementById('update-btn').addEventListener('click', function () {
       setStatus('Record ' + res.data.record.ID + ' updated.');
       editingId = null;
       clearForm(true);
-    });
+    }).catch(function (err) { setStatus(err.message); });
 });
 
 document.getElementById('delete-btn').addEventListener('click', function () {
   if (editingId === null) return;
   if (!confirm('Delete record ' + editingId + '? This cannot be undone.')) return;
-  fetch('/api/' + currentTabKey + '/records/' + editingId, { method: 'DELETE' })
-    .then(function (r) { return r.json(); })
-    .then(function () {
+  apiRequest('/api/' + currentTabKey + '/records/' + editingId, { method: 'DELETE' })
+    .then(function (res) {
+      if (!res.ok) { setStatus(res.data.error); return; }
       editingId = null;
       loadRecords();
       setStatus('Record deleted.');
       clearForm(false);
-    });
+    }).catch(function (err) { setStatus(err.message); });
 });
 
 document.getElementById('clear-btn').addEventListener('click', function () { clearForm(false); });
@@ -562,12 +626,14 @@ function buildTableHead() {
 }
 
 function loadRecords() {
-  fetch('/api/' + currentTabKey + '/records').then(function (r) { return r.json(); }).then(function (data) {
+  apiRequest('/api/' + currentTabKey + '/records').then(function (res) {
+    if (!res.ok) throw new Error(res.data.error || 'Failed to load records.');
+    var data = res.data;
     allRecords = data.records;
     nextIdPreview = data.next_id;
     renderTable();
     refreshAutoFields();
-  });
+  }).catch(function (err) { setStatus(err.message); });
 }
 
 function renderTable() {

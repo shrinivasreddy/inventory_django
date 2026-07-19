@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log in | Inventory Web</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px;
+      background: #0f172a; color: #e5e7eb; font-family: "Segoe UI", Arial, sans-serif; }
+    .card { width: 100%; max-width: 420px; padding: 32px; border: 1px solid #334155;
+      border-radius: 14px; background: #1e293b; box-shadow: 0 20px 50px #02061766; }
+    h1 { margin: 0 0 8px; color: #4ade80; font-size: 28px; }
+    .subtitle { margin: 0 0 24px; color: #94a3b8; }
+    label { display: block; margin: 14px 0 6px; color: #cbd5e1; font-size: 13px; font-weight: 700; }
+    input { width: 100%; padding: 12px; border: 1px solid #475569; border-radius: 7px;
+      background: #0f172a; color: #fff; font-size: 15px; }
+    input:focus { outline: 2px solid #4ade80; border-color: transparent; }
+    button { width: 100%; margin-top: 22px; padding: 12px; border: 0; border-radius: 7px;
+      background: #4ade80; color: #052e16; font-weight: 800; cursor: pointer; }
+    .errors { padding: 10px 12px; border-radius: 7px; background: #7f1d1d; color: #fecaca; font-size: 13px; }
+    .footer { margin: 20px 0 0; text-align: center; color: #94a3b8; font-size: 14px; }
+    a { color: #4ade80; }
+    @media (max-width: 480px) {
+      body { padding: 12px; align-items: start; }
+      .card { padding: 24px 18px; border-radius: 10px; }
+      h1 { font-size: 24px; }
+      input { min-height: 44px; font-size: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Inventory Web</h1>
+    <p class="subtitle">Log in to manage inventory records.</p>
+    {% if form.errors %}
+      <div class="errors">The username or password is incorrect.</div>
+    {% endif %}
+    <form method="post">
+      {% csrf_token %}
+      <label for="{{ form.username.id_for_label }}">Username</label>
+      {{ form.username }}
+      <label for="{{ form.password.id_for_label }}">Password</label>
+      {{ form.password }}
+      {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+      <button type="submit">Log in</button>
+    </form>
+    <p class="footer"><a href="{% url 'password_reset' %}">Forgot your password?</a></p>
+    <p class="footer">Need an account? <a href="{% url 'signup' %}">Sign up</a></p>
+  </main>
+</body>
+</html>

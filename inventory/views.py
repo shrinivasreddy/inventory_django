@@ -2,16 +2,22 @@ import io
 import json
 import threading
 from datetime import date
+from functools import wraps
 
+from django.contrib.auth import get_user_model, login
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth.password_validation import get_default_password_validators
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.http import JsonResponse, HttpResponseNotAllowed, HttpResponse
-from django.shortcuts import render
-from django.views.decorators.csrf import csrf_exempt
+from django.shortcuts import redirect, render
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
 from .models import TabRecord, TabState
+from .forms import SignUpForm
 from .specs import SPECS, TAB_ORDER, compute_auto_fields, missing_required_fields, build_reverse_map
 
 # One lock per tab, held around every read-modify-write sequence, same
@@ -21,6 +27,17 @@ from .specs import SPECS, TAB_ORDER, compute_auto_fields, missing_required_field
 # own transaction.atomic() gives us automatic rollback-on-exception on top
 # of that, which the Flask/JSON-file version had to do by hand.
 locks = {key: threading.Lock() for key in SPECS}
+
+
+def api_login_required(view):
+    """Return a machine-readable 401 for API clients instead of an HTML
+    redirect to the login form."""
+    @wraps(view)
+    def wrapped(request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return JsonResponse({"error": "Authentication required."}, status=401)
+        return view(request, *args, **kwargs)
+    return wrapped
 
 
 def parse_json_body(request):
@@ -80,6 +97,42 @@ def renumber_tab_ids(key):
 # ---------------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------------
+@require_http_methods(["GET", "POST"])
+def signup(request):
+    if request.user.is_authenticated:
+        return redirect("home")
+    if request.method == "POST":
+        form = SignUpForm(request.POST)
+        if form.is_valid():
+            user = form.save()
+            login(request, user)
+            return redirect("home")
+    else:
+        form = SignUpForm()
+    return render(request, "registration/signup.html", {"form": form})
+
+
+@require_POST
+def password_requirements(request):
+    data = parse_json_body(request)
+    password = str(data.get("password") or "")
+    user = get_user_model()(
+        username=str(data.get("username") or ""),
+        email=str(data.get("email") or ""),
+    )
+    checks = {}
+    for validator in get_default_password_validators():
+        key = validator.__class__.__name__
+        try:
+            validator.validate(password, user)
+            checks[key] = True
+        except ValidationError:
+            checks[key] = False
+    return JsonResponse({"checks": checks})
+
+
+@login_required
+@require_GET
 def home(request):
     tabs = [{"key": k, "label": SPECS[k]["tab_label"]} for k in TAB_ORDER]
     return render(request, "index.html", {"tabs_json": json.dumps(tabs)})
@@ -88,6 +141,8 @@ def home(request):
 # ---------------------------------------------------------------------------
 # Spec
 # ---------------------------------------------------------------------------
+@api_login_required
+@require_GET
 def api_spec(request, key):
     if key not in SPECS:
         return JsonResponse({"error": "Unknown tab"}, status=404)
@@ -124,7 +179,7 @@ def api_spec(request, key):
 # ---------------------------------------------------------------------------
 # Records: GET (list) / POST (add) / DELETE (delete-all)
 # ---------------------------------------------------------------------------
-@csrf_exempt
+@api_login_required
 def api_records(request, key):
     if key not in SPECS:
         return JsonResponse({"error": "Unknown tab"}, status=404)
@@ -174,7 +229,7 @@ def api_records(request, key):
 # ---------------------------------------------------------------------------
 # Single record: PUT (update) / DELETE
 # ---------------------------------------------------------------------------
-@csrf_exempt
+@api_login_required
 def api_record_detail(request, key, rec_id):
     if key not in SPECS:
         return JsonResponse({"error": "Unknown tab"}, status=404)
@@ -228,7 +283,7 @@ def api_record_detail(request, key, rec_id):
 # ---------------------------------------------------------------------------
 # Dropdown "+" add option
 # ---------------------------------------------------------------------------
-@csrf_exempt
+@api_login_required
 def api_options(request, key):
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -362,6 +417,8 @@ def _xlsx_response(wb, filename):
     return resp
 
 
+@api_login_required
+@require_GET
 def api_export(request, key):
     if key not in SPECS:
         return JsonResponse({"error": "Unknown tab"}, status=404)
@@ -380,6 +437,8 @@ def api_export(request, key):
     return _xlsx_response(wb, filename)
 
 
+@api_login_required
+@require_GET
 def api_export_all(request):
     snapshots = {}
     for key in TAB_ORDER:
