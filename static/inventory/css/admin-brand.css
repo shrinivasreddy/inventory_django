@@ -1,0 +1,51 @@
+:root { --primary:#002a7d; --secondary:#01359c; --accent:#ea6600; --primary-fg:#fff; --body-fg:#000716; --body-bg:#f6f6f6; --body-quiet-color:#667085; --body-loud-color:#000716; --header-color:#fff; --header-branding-color:#fff; --header-bg:#000716; --header-link-color:#fff; --breadcrumbs-fg:#dcecff; --breadcrumbs-link-fg:#fff; --breadcrumbs-bg:#002a7d; --link-fg:#01359c; --link-hover-color:#ea6600; --link-selected-fg:#002a7d; --hairline-color:#dce5f2; --border-color:#cbd8e8; --darkened-bg:#eef4fa; --selected-bg:#eaf6fc; --selected-row:#f2f7fc; --button-fg:#fff; --button-bg:#002a7d; --button-hover-bg:#ea6600; --default-button-bg:#01359c; --default-button-hover-bg:#ea6600; --close-button-bg:#526079; --close-button-hover-bg:#000716; --object-tools-fg:#fff; --object-tools-bg:#002a7d; --object-tools-hover-bg:#ea6600; }
+html, body, input, textarea, select, button { font-family:"Khula","Segoe UI",Arial,sans-serif; }
+html, body, #content-main .module table, #changelist .actions, #changelist .paginator, #toolbar, .submit-row { background:#f6f6f6; }
+body { color:#000716; }
+#header { min-height:78px; border:0; background:linear-gradient(110deg,#000716,#002a7d); }
+.admin-brand { display:flex; align-items:center; gap:18px; color:#fff!important; text-decoration:none; }
+.admin-brand img { width:170px; height:auto; }
+.admin-brand span { padding-left:18px; border-left:1px solid rgba(255,255,255,.28); font-size:16px; font-weight:600; }
+.module, .inline-group, #changelist-filter, .submit-row, .excel-import-card, .excel-help-card, .confirmation-card { border:1px solid #dce5f2; border-radius:4px; background:#fff; box-shadow:0 12px 35px rgba(0,42,125,.08); }
+.module h2, .module caption, .inline-group h2 { background:#002a7d; color:#fff; }
+input, textarea, select, .vTextField, #nav-filter { border:1px solid #cbd8e8!important; border-radius:2px!important; background:#fff!important; color:#000716!important; }
+input:focus, textarea:focus, select:focus { border-color:#01359c!important; outline:0!important; box-shadow:0 0 0 3px rgba(134,214,255,.38); }
+input[type="submit"], button, .button, a.button, .object-tools a { border-radius:0!important; background:#002a7d!important; color:#fff!important; }
+input[type="submit"]:hover, button:hover, .button:hover, a.button:hover, .object-tools a:hover { background:#ea6600!important; }
+.bulk-form-banner { border-color:#86d6ff; border-radius:4px; background:#eaf6fc; }
+.bulk-form-banner strong, .excel-help-card h2 { color:#002a7d; }
+.bulk-form-banner span, .excel-help-card ol, .excel-help-card p, .form-field label { color:#526079; }
+#nav-sidebar { border-color:#dce5f2; background:#fff; }
+#nav-sidebar .current-model { background:#eaf6fc; }
+.login { background:linear-gradient(135deg,#000716 0%,#002a7d 60%,#01359c 100%); }
+.login #container { border:0; border-radius:4px; background:#fff; box-shadow:0 28px 80px rgba(0,7,22,.38); }
+.login #content, .login .submit-row { background:#fff; }
+.login .form-row label { color:#002a7d; }
+@media (max-width:767px) { .admin-brand { align-items:flex-start; flex-direction:column; gap:8px; } .admin-brand img { width:150px; } .admin-brand span { padding-left:0; border-left:0; } }
+
+
+/* Complete overrides for the legacy admin component styles. */
+#content h1, .confirmation-card h1, .excel-import-heading h1 { color:#002a7d; }
+#content-main .module tr, #content-main .module td, #content-main .module th { border-color:#dce5f2; }
+#toolbar, #changelist .actions, #changelist .paginator { border-color:#dce5f2; background:#fff; }
+#user-tools { color:#dcecff; }
+#user-tools a { color:#fff; border-bottom-color:rgba(255,255,255,.45); }
+.row-action { border-radius:2px; }
+.row-action-edit { background:#002a7d; color:#fff!important; }
+.row-action-edit:hover { background:#ea6600; }
+.row-action-delete { background:#b42318; color:#fff!important; }
+.row-action-delete:hover { background:#d92d20; }
+.confirmation-card, .excel-import-card, .excel-help-card { color:#000716; }
+.confirmation-lead, .excel-import-heading p, .excel-help-card p, .excel-help-card ol { color:#526079; }
+.deletion-details { border-color:#dce5f2; border-radius:2px; background:#f8fbfe; }
+.deletion-details summary, .deletion-details h2 { color:#002a7d; }
+.confirmation-icon-danger { background:#fee4e2; color:#b42318; }
+.confirmation-icon-warning { background:#fff4e5; color:#b54708; }
+.confirmation-actions a.button-secondary, .excel-form-actions .button-secondary { background:#526079!important; color:#fff!important; }
+.confirmation-actions a.button-secondary:hover, .excel-form-actions .button-secondary:hover { background:#000716!important; }
+.excel-import-icon { border-radius:2px; background:#eaf6fc; color:#002a7d; }
+.import-errors { border-color:#b42318; border-radius:2px; background:#fff1f0; color:#b42318; }
+.form-field .help { color:#667085; }
+.errorlist { color:#b42318; }
+.login #header { background:linear-gradient(110deg,#000716,#002a7d); }
+.login #content h1 { color:#002a7d; }

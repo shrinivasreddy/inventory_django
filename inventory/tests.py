@@ -1,5 +1,6 @@
 import io
 import re
+from unittest.mock import patch
 
 from django.core import mail
 from django.contrib.auth.models import User
@@ -38,6 +39,66 @@ class AuthenticationTests(TestCase):
         )
         self.assertRedirects(response, reverse("home"))
         self.assertEqual(self.client.get(reverse("home")).status_code, 200)
+
+    def test_assistant_preview_requires_authentication(self):
+        csrf = self.client.get(reverse("login")).cookies["csrftoken"].value
+        response = self.client.post(
+            reverse("api_assistant_preview"),
+            data='{"prompt":"add a sign"}',
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=csrf,
+        )
+        self.assertEqual(response.status_code, 401)
+
+    @patch("inventory.views.interpret_inventory_prompt")
+    def test_authenticated_user_can_preview_without_saving(self, interpret):
+        interpret.return_value = {
+            "section": "sign",
+            "section_label": "Sign Inventory",
+            "row": {"ST_ID": "100", "POLE_ID": "P2", "SIGN": "R1-1"},
+            "summary": "Add one sign record.",
+        }
+        self.client.force_login(self.user)
+        csrf = self.client.get(reverse("home")).cookies["csrftoken"].value
+        response = self.client.post(
+            reverse("api_assistant_preview"),
+            data='{"prompt":"add sign 100 pole P2 R1-1"}',
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=csrf,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["section"], "sign")
+        self.assertEqual(response.json()["row"]["SIGN_UID"], "SR_100_P2_R1-1")
+        self.assertEqual(TabRecord.objects.count(), 0)
+
+    def test_assistant_rejects_empty_prompt(self):
+        self.client.force_login(self.user)
+        csrf = self.client.get(reverse("home")).cookies["csrftoken"].value
+        response = self.client.post(
+            reverse("api_assistant_preview"),
+            data='{"prompt":"  "}',
+            content_type="application/json",
+            HTTP_X_CSRFTOKEN=csrf,
+        )
+        self.assertEqual(response.status_code, 400)
+
+    @patch("inventory.views.transcribe_audio", return_value="Add sign record ST ID 100")
+    def test_authenticated_user_can_transcribe_voice(self, transcribe):
+        self.client.force_login(self.user)
+        csrf = self.client.get(reverse("home")).cookies["csrftoken"].value
+        audio = SimpleUploadedFile(
+            "voice.webm",
+            b"test-audio",
+            content_type="audio/webm",
+        )
+        response = self.client.post(
+            reverse("api_assistant_transcribe"),
+            {"audio": audio},
+            HTTP_X_CSRFTOKEN=csrf,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["text"], "Add sign record ST ID 100")
+        transcribe.assert_called_once()
 
         csrf = self.client.cookies["csrftoken"].value
         response = self.client.post(

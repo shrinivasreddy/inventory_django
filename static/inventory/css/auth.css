@@ -1,0 +1,22 @@
+:root { --bd-navy:#002a7d; --bd-blue:#01359c; --bd-ink:#000716; --bd-orange:#ea6600; --bd-sky:#86d6ff; --bd-white:#fff; --bd-muted:#667085; }
+html, body { font-family:"Khula","Segoe UI",Arial,sans-serif; }
+body { position:relative; overflow-x:hidden; background:linear-gradient(135deg,#000716 0%,#002a7d 58%,#01359c 100%); color:var(--bd-ink); }
+body::before, body::after { position:fixed; border:1px dashed rgba(134,214,255,.4); border-radius:50%; content:""; pointer-events:none; }
+body::before { top:-190px; right:-120px; width:430px; height:430px; box-shadow:0 0 0 64px rgba(134,214,255,.04),0 0 0 128px rgba(134,214,255,.03); }
+body::after { bottom:-230px; left:-150px; width:390px; height:390px; }
+.card { position:relative; z-index:1; max-width:460px; border:0; border-radius:4px; background:var(--bd-white); color:var(--bd-ink); box-shadow:0 28px 80px rgba(0,7,22,.38); }
+.brand-lockup { margin:-32px -32px 28px; padding:25px 32px 23px; background:var(--bd-ink); }
+.brand-lockup img { display:block; width:210px; max-width:78%; height:auto; }
+h1 { color:var(--bd-navy); font-size:29px; font-weight:700; letter-spacing:-.02em; }
+.subtitle, .footer, .helptext, .password-checklist li { color:var(--bd-muted); }
+label { color:var(--bd-navy); font-weight:700; }
+input { border:1px solid #cbd8e8; border-radius:2px; background:var(--bd-white); color:var(--bd-ink); }
+input:focus { border-color:var(--bd-blue); outline:0; box-shadow:0 0 0 3px rgba(134,214,255,.38); }
+button { border-radius:0; background:var(--bd-navy); color:var(--bd-white); font-weight:700; }
+button:hover { background:var(--bd-orange); }
+a { color:var(--bd-blue); font-weight:700; text-decoration-color:rgba(1,53,156,.35); text-underline-offset:3px; }
+a:hover { color:var(--bd-orange); }
+.errors, .errorlist { color:#b42318; }
+.errors { border-left:4px solid #b42318; border-radius:0; background:#fff1f0; }
+.password-checklist li.valid, .password-checklist li.valid::before { color:#087a55; }
+@media (max-width:520px) { .brand-lockup { margin:-24px -18px 24px; padding:22px 18px; } }

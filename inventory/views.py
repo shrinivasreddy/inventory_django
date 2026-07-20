@@ -1,4 +1,5 @@
 import io
+import hashlib
 import json
 import threading
 from datetime import date
@@ -25,6 +26,7 @@ from .models import (
     TabRecord,
 )
 from .forms import SignUpForm
+from .assistant import AssistantError, interpret_inventory_prompt, transcribe_audio
 from .specs import (
     TAB_ORDER,
     compute_auto_fields,
@@ -120,6 +122,57 @@ def password_requirements(request):
 def home(request):
     tabs = [{"key": k, "label": get_spec(k)["tab_label"]} for k in TAB_ORDER]
     return render(request, "index.html", {"tabs_json": json.dumps(tabs)})
+
+
+@api_login_required
+@require_POST
+def api_assistant_preview(request):
+    data = parse_json_body(request)
+    prompt = str(data.get("prompt") or "").strip()
+    if not prompt:
+        return JsonResponse({"error": "Enter or speak an instruction first."}, status=400)
+    if len(prompt) > 4000:
+        return JsonResponse(
+            {"error": "The instruction must be 4,000 characters or fewer."},
+            status=400,
+        )
+    safety_identifier = hashlib.sha256(
+        f"{request.user.pk}:{request.user.date_joined.isoformat()}".encode("utf-8")
+    ).hexdigest()
+    try:
+        preview = interpret_inventory_prompt(prompt, safety_identifier)
+    except AssistantError as exc:
+        return JsonResponse({"error": str(exc)}, status=503)
+
+    state = get_section_state(preview["section"])
+    spec = get_spec(preview["section"])
+    complete_row = {
+        column: str(preview["row"].get(column, "") or "")
+        for column in spec["columns"]
+        if column != "ID"
+    }
+    complete_row = compute_auto_fields(preview["section"], complete_row, state)
+    preview["row"] = complete_row
+    preview["missing_required"] = missing_required_fields(
+        preview["section"],
+        complete_row,
+    )
+    return JsonResponse(preview)
+
+
+@api_login_required
+@require_POST
+def api_assistant_transcribe(request):
+    audio = request.FILES.get("audio")
+    if audio is None:
+        return JsonResponse({"error": "No voice recording was provided."}, status=400)
+    if audio.size > 10 * 1024 * 1024:
+        return JsonResponse({"error": "Voice recordings must be 10 MB or smaller."}, status=400)
+    try:
+        text = transcribe_audio(audio.read(), audio.name, audio.content_type)
+    except AssistantError as exc:
+        return JsonResponse({"error": str(exc)}, status=503)
+    return JsonResponse({"text": text})
 
 
 # ---------------------------------------------------------------------------

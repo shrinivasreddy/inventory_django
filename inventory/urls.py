@@ -51,6 +51,12 @@ urlpatterns = [
         name="password_reset_complete",
     ),
     path("", views.home, name="home"),
+    path("api/assistant/preview", views.api_assistant_preview, name="api_assistant_preview"),
+    path(
+        "api/assistant/transcribe",
+        views.api_assistant_transcribe,
+        name="api_assistant_transcribe",
+    ),
     path("api/export_all", views.api_export_all, name="api_export_all"),
     path("api/<str:key>/spec", views.api_spec, name="api_spec"),
     path("api/<str:key>/records", views.api_records, name="api_records"),

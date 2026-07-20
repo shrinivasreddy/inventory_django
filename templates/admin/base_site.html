@@ -5,6 +5,9 @@
 
 {% block extrastyle %}
 {{ block.super }}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Khula:wght@300;400;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
     --primary: #4ade80; --secondary: #16a34a; --accent: #86efac;
@@ -222,11 +225,15 @@
     .excel-form-actions .button { width: 100%; }
   }
 </style>
+<link rel="stylesheet" href="{% static 'inventory/css/admin-brand.css' %}">
 {% endblock %}
 
 {% block branding %}
 <div id="branding">
-  <h1 id="site-name"><a href="{% url 'admin:index' %}">Bluedome Inventory</a></h1>
+  <a class="admin-brand" href="{% url 'admin:index' %}">
+    <img src="{% static 'inventory/img/blue-dome-logo.svg' %}" alt="Blue Dome Technologies">
+    <span>Inventory Administration</span>
+  </a>
 </div>
 {% endblock %}
 

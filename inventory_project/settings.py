@@ -97,8 +97,9 @@ TIME_ZONE = os.environ.get("DJANGO_TIME_ZONE", "UTC")
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = "static/"
+STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+STATICFILES_DIRS = [BASE_DIR / "static"]
 # Serves static files (admin CSS/JS) directly from the WSGI process via
 # whitenoise, so the app is self-contained under waitress with no separate
 # static-file server needed. Run `python manage.py collectstatic` once
@@ -107,6 +108,7 @@ STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"},
 }
+WHITENOISE_MANIFEST_STRICT = False
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -132,6 +134,16 @@ DEFAULT_FROM_EMAIL = os.environ.get(
     "Inventory Web <no-reply@localhost>",
 )
 EMAIL_TIMEOUT = int(os.environ.get("DJANGO_EMAIL_TIMEOUT", "10"))
+
+# Prompt-to-inventory assistant. The API key is server-side only and is never
+# exposed in HTML or JavaScript.
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_ASSISTANT_MODEL = os.environ.get("OPENAI_ASSISTANT_MODEL", "gpt-5.6-luna")
+OPENAI_TRANSCRIPTION_MODEL = os.environ.get(
+    "OPENAI_TRANSCRIPTION_MODEL",
+    "gpt-4o-mini-transcribe",
+)
+OPENAI_ASSISTANT_TIMEOUT = int(os.environ.get("OPENAI_ASSISTANT_TIMEOUT", "30"))
 
 # Admin URL path is configurable so it can be changed from the well-known
 # default ("admin/") if you want to reduce automated-scanner noise.

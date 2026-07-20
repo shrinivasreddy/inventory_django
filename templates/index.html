@@ -1,8 +1,13 @@
+{% load static %}
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8"/>
-<title>Inventory Web</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Blue Dome Inventory</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Khula:wght@300;400;600;700;800&display=swap" rel="stylesheet">
 <style>
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: #0f172a; color: #e5e7eb;
@@ -108,6 +113,39 @@
   tbody tr { cursor: pointer; }
   tbody tr:hover { background: #263449; }
   tbody tr.selected { background: #1d4ed8; color: #fff; }
+  #assistant-toggle {
+    position: fixed; right: 22px; bottom: 22px; z-index: 30; border: 0;
+    border-radius: 999px; padding: 13px 18px; background: #4ade80; color: #052e16;
+    font-weight: 800; cursor: pointer; box-shadow: 0 12px 30px #02061788;
+  }
+  #assistant-panel {
+    position: fixed; right: 22px; bottom: 82px; z-index: 29; width: min(430px, calc(100vw - 24px));
+    max-height: min(650px, calc(100vh - 110px)); overflow: auto; padding: 18px;
+    border: 1px solid #475569; border-radius: 14px; background: #111827;
+    box-shadow: 0 20px 55px #020617aa;
+  }
+  #assistant-panel h2 { margin: 0; color: #4ade80; font-size: 19px; }
+  #assistant-panel p { color: #94a3b8; line-height: 1.45; }
+  #assistant-prompt {
+    width: 100%; min-height: 105px; resize: vertical; padding: 11px; border: 1px solid #475569;
+    border-radius: 8px; background: #0f172a; color: #fff; font: inherit;
+  }
+  .assistant-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .assistant-actions button {
+    min-height: 42px; padding: 9px 13px; border: 0; border-radius: 7px;
+    background: #4ade80; color: #052e16; font-weight: 800; cursor: pointer;
+  }
+  .assistant-actions .secondary { background: #334155; color: #fff; }
+  #assistant-voice.listening { background: #dc2626; color: #fff; }
+  #assistant-status { min-height: 20px; margin-top: 10px; color: #cbd5e1; font-size: 13px; }
+  #assistant-preview {
+    margin-top: 12px; padding: 12px; border: 1px solid #334155;
+    border-radius: 8px; background: #0f172a;
+  }
+  #assistant-preview dl { display: grid; grid-template-columns: minmax(90px, auto) 1fr; gap: 6px 10px; }
+  #assistant-preview dt { color: #94a3b8; font-weight: 700; }
+  #assistant-preview dd { margin: 0; overflow-wrap: anywhere; }
+  .assistant-warning { color: #fbbf24 !important; }
 
   @media (max-width: 900px) {
     #banner { align-items: flex-start; gap: 14px; flex-wrap: wrap; }
@@ -129,17 +167,21 @@
     #search-row { align-items: stretch; flex-direction: column; }
     input[type=text], input[type=date], input[type=number], select { min-height: 42px; font-size: 16px; }
     #table-scroll { max-height: 52vh; }
+    #assistant-toggle { right: 12px; bottom: 12px; }
+    #assistant-panel { right: 12px; bottom: 68px; }
   }
 </style>
+<link rel="stylesheet" href="{% static 'inventory/css/brand.css' %}">
 </head>
 <body>
 
-<div id="tabbar"></div>
-
 <div id="banner">
-  <div>
-    <h1 id="banner-title">Loading...</h1>
-    <p id="banner-subtitle"></p>
+  <div class="brand-heading">
+    <img src="{% static 'inventory/img/blue-dome-logo.svg' %}" alt="Blue Dome Technologies">
+    <div class="brand-heading-copy">
+      <h1 id="banner-title">Loading...</h1>
+      <p id="banner-subtitle"></p>
+    </div>
   </div>
   <div id="banner-actions">
     <span id="current-user">Signed in as {{ request.user.username }}</span>
@@ -153,6 +195,8 @@
     </form>
   </div>
 </div>
+
+<div id="tabbar"></div>
 
 <div id="layout">
   <div id="form-panel">
@@ -180,6 +224,29 @@
     </div>
   </div>
 </div>
+
+<button id="assistant-toggle" type="button" aria-controls="assistant-panel" aria-expanded="false">
+  Chat + Voice
+</button>
+<aside id="assistant-panel" class="hidden" aria-label="Inventory assistant">
+  <h2>Inventory Assistant</h2>
+  <p>Describe one record to add. You can type or use the microphone. Review the preview before saving.</p>
+  <textarea id="assistant-prompt" maxlength="4000"
+    placeholder="Example: Add a sign record with ST ID 100, pole ID P2, sign R1-1 and street name Main Street."></textarea>
+  <div class="assistant-actions">
+    <button id="assistant-preview-btn" type="button">Create Preview</button>
+    <button id="assistant-voice" class="secondary" type="button">Speak</button>
+    <button id="assistant-close" class="secondary" type="button">Close</button>
+  </div>
+  <div id="assistant-status" role="status" aria-live="polite"></div>
+  <div id="assistant-preview" class="hidden">
+    <div id="assistant-preview-content"></div>
+    <div class="assistant-actions">
+      <button id="assistant-confirm" type="button">Confirm and Add</button>
+      <button id="assistant-cancel" class="secondary" type="button">Discard</button>
+    </div>
+  </div>
+</aside>
 
 <script>
 var csrfToken = '{{ csrf_token|escapejs }}';
@@ -686,6 +753,185 @@ function renderTable() {
 }
 
 document.getElementById('search-box').addEventListener('input', renderTable);
+
+var assistantPreview = null;
+var assistantPanel = document.getElementById('assistant-panel');
+var assistantToggle = document.getElementById('assistant-toggle');
+var assistantPrompt = document.getElementById('assistant-prompt');
+var assistantStatus = document.getElementById('assistant-status');
+var assistantPreviewBox = document.getElementById('assistant-preview');
+var assistantConfirm = document.getElementById('assistant-confirm');
+
+function setAssistantOpen(open) {
+  assistantPanel.classList.toggle('hidden', !open);
+  assistantToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (open) assistantPrompt.focus();
+}
+function clearAssistantPreview() {
+  assistantPreview = null;
+  assistantPreviewBox.classList.add('hidden');
+  document.getElementById('assistant-preview-content').innerHTML = '';
+}
+assistantToggle.addEventListener('click', function () {
+  setAssistantOpen(assistantPanel.classList.contains('hidden'));
+});
+document.getElementById('assistant-close').addEventListener('click', function () {
+  setAssistantOpen(false);
+});
+document.getElementById('assistant-cancel').addEventListener('click', function () {
+  clearAssistantPreview();
+  assistantStatus.textContent = 'Preview discarded.';
+});
+document.getElementById('assistant-preview-btn').addEventListener('click', function () {
+  var prompt = assistantPrompt.value.trim();
+  clearAssistantPreview();
+  assistantStatus.textContent = 'Creating a validated preview...';
+  apiRequest('/api/assistant/preview', {
+    method: 'POST',
+    body: JSON.stringify({ prompt: prompt })
+  }).then(function (res) {
+    if (!res.ok) throw new Error(res.data.error || 'Could not create a preview.');
+    assistantPreview = res.data;
+    var content = document.getElementById('assistant-preview-content');
+    content.innerHTML = '';
+    content.appendChild(el('strong', { text: res.data.section_label }));
+    if (res.data.summary) content.appendChild(el('p', { text: res.data.summary }));
+    var dl = el('dl');
+    Object.keys(res.data.row).forEach(function (field) {
+      if (!res.data.row[field]) return;
+      dl.appendChild(el('dt', { text: field.replace(/_/g, ' ') }));
+      dl.appendChild(el('dd', { text: res.data.row[field] }));
+    });
+    content.appendChild(dl);
+    var missing = res.data.missing_required || [];
+    assistantConfirm.disabled = missing.length > 0;
+    if (missing.length) {
+      content.appendChild(el('p', {
+        class: 'assistant-warning',
+        text: 'More information is required: ' + missing.join(', ')
+      }));
+      assistantStatus.textContent = 'Add the missing values and create a new preview.';
+    } else {
+      assistantStatus.textContent = 'Review the details, then confirm to save.';
+    }
+    assistantPreviewBox.classList.remove('hidden');
+  }).catch(function (err) {
+    assistantStatus.textContent = err.message;
+  });
+});
+assistantConfirm.addEventListener('click', function () {
+  if (!assistantPreview || assistantConfirm.disabled) return;
+  assistantConfirm.disabled = true;
+  assistantStatus.textContent = 'Saving the record...';
+  apiRequest('/api/' + assistantPreview.section + '/records', {
+    method: 'POST',
+    body: JSON.stringify({ row: assistantPreview.row })
+  }).then(function (res) {
+    if (!res.ok) throw new Error(res.data.error || 'Could not save the record.');
+    var savedSection = assistantPreview.section;
+    assistantStatus.textContent = 'Record ' + res.data.record.ID + ' added successfully.';
+    assistantPrompt.value = '';
+    clearAssistantPreview();
+    if (savedSection === currentTabKey) loadRecords();
+    else switchTab(savedSection);
+  }).catch(function (err) {
+    assistantStatus.textContent = err.message;
+    assistantConfirm.disabled = false;
+  });
+});
+
+var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+var recognition = null;
+var voiceButton = document.getElementById('assistant-voice');
+if (SpeechRecognition) {
+  recognition = new SpeechRecognition();
+  recognition.lang = document.documentElement.lang || 'en-US';
+  recognition.interimResults = false;
+  recognition.continuous = false;
+  recognition.onstart = function () {
+    voiceButton.classList.add('listening');
+    voiceButton.textContent = 'Listening...';
+    assistantStatus.textContent = 'Speak the inventory details now.';
+  };
+  recognition.onresult = function (event) {
+    var transcript = event.results[0][0].transcript;
+    assistantPrompt.value = assistantPrompt.value
+      ? assistantPrompt.value.trim() + ' ' + transcript
+      : transcript;
+    assistantStatus.textContent = 'Voice captured. Review the text, then create a preview.';
+  };
+  recognition.onerror = function (event) {
+    assistantStatus.textContent = event.error === 'not-allowed'
+      ? 'Microphone access was not allowed. You can still type your instruction.'
+      : 'Voice input could not be captured. Please try again or type the instruction.';
+  };
+  recognition.onend = function () {
+    voiceButton.classList.remove('listening');
+    voiceButton.textContent = 'Speak';
+  };
+  voiceButton.addEventListener('click', function () {
+    try { recognition.start(); }
+    catch (error) { assistantStatus.textContent = 'Voice input is already listening.'; }
+  });
+} else {
+  var mediaRecorder = null;
+  var voiceChunks = [];
+  var voiceStopTimer = null;
+  if (window.MediaRecorder && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    voiceButton.addEventListener('click', function () {
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        return;
+      }
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+        voiceChunks = [];
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = function (event) {
+          if (event.data.size) voiceChunks.push(event.data);
+        };
+        mediaRecorder.onstart = function () {
+          voiceButton.classList.add('listening');
+          voiceButton.textContent = 'Stop recording';
+          assistantStatus.textContent = 'Recording... Speak the inventory details.';
+          voiceStopTimer = window.setTimeout(function () {
+            if (mediaRecorder.state === 'recording') mediaRecorder.stop();
+          }, 15000);
+        };
+        mediaRecorder.onstop = function () {
+          window.clearTimeout(voiceStopTimer);
+          stream.getTracks().forEach(function (track) { track.stop(); });
+          voiceButton.classList.remove('listening');
+          voiceButton.textContent = 'Speak';
+          assistantStatus.textContent = 'Transcribing voice...';
+          var blob = new Blob(voiceChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+          var formData = new FormData();
+          formData.append('audio', blob, 'inventory-voice.webm');
+          fetch('/api/assistant/transcribe', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': csrfToken },
+            body: formData
+          }).then(parseApiResponse).then(function (res) {
+            if (!res.ok) throw new Error(res.data.error || 'Could not transcribe voice.');
+            assistantPrompt.value = assistantPrompt.value
+              ? assistantPrompt.value.trim() + ' ' + res.data.text
+              : res.data.text;
+            assistantStatus.textContent = 'Voice captured. Review the text, then create a preview.';
+          }).catch(function (err) {
+            assistantStatus.textContent = err.message;
+          });
+        };
+        mediaRecorder.start();
+      }).catch(function () {
+        assistantStatus.textContent =
+          'Microphone access was not allowed. You can still type your instruction.';
+      });
+    });
+  } else {
+    voiceButton.disabled = true;
+    voiceButton.title = 'Voice input is not supported by this browser.';
+    voiceButton.textContent = 'Voice unavailable';
+  }
+}
 
 // ════════════════════════════════════════════
 //  INIT
