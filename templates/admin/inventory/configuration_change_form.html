@@ -1,0 +1,34 @@
+{% extends "admin/change_form.html" %}
+
+{% block form_top %}
+  <div class="bulk-form-banner">
+    <div>
+      <strong>Need to add multiple {{ opts.verbose_name_plural }}?</strong>
+      <span>Use one Excel workbook instead of entering rows individually.</span>
+    </div>
+    <div class="bulk-form-actions">
+      {% if has_add_permission %}
+        <a href="{{ excel_import_url }}" class="button excel-action excel-import">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M19 9h-4V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-8h-2v8H5V5h8v6h6V9zm-8 7H8v-2h3v-3h2v3h3v2h-3v3h-2v-3zm6-13v4h4l-4-4z"/></svg>
+          Import Multiple via Excel
+        </a>
+      {% endif %}
+      <a href="{{ excel_template_url }}" class="button button-secondary">Download Template</a>
+    </div>
+  </div>
+  {{ block.super }}
+{% endblock %}
+
+{% block object-tools-items %}
+  {% if has_add_permission %}
+    <li>
+      <a href="{{ excel_import_url }}" class="excel-action excel-import">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M19 9h-4V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-8h-2v8H5V5h8v6h6V9zm-8 7H8v-2h3v-3h2v3h3v2h-3v3h-2v-3zm6-13v4h4l-4-4z"/></svg>
+        Import Multiple via Excel
+      </a>
+    </li>
+  {% endif %}
+  <li><a href="{{ excel_template_url }}">Download Template</a></li>
+  <li><a href="{{ excel_export_url }}">Export All</a></li>
+  {{ block.super }}
+{% endblock %}

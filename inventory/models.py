@@ -8,12 +8,117 @@ Flask version's flat JSON files. Two models cover everything:
   rather than as fixed database columns -- this keeps the same spec-driven
   design the Flask version used, just persisted differently.
 
-- TabState: one row per tab, holding its dropdown options, MUTCD tables,
-  and auto-fill type-map. This is the direct database equivalent of the
-  Flask version's in-memory `state[key]` dict.
+- InventorySection and the normalized option/mapping models hold all editable
+  section configuration. JSON files are import seeds only and are never read
+  by request handling.
 """
 
 from django.db import models
+
+
+class InventorySection(models.Model):
+    key = models.CharField(max_length=20, primary_key=True)
+    name = models.CharField(max_length=100)
+    configuration = models.JSONField(default=dict)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["key"]
+
+    def __str__(self):
+        return self.name
+
+
+class DropdownOption(models.Model):
+    section = models.ForeignKey(InventorySection, on_delete=models.CASCADE, related_name="dropdown_options")
+    field_name = models.CharField(max_length=100)
+    value = models.CharField(max_length=500)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["section", "field_name", "sort_order", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["section", "field_name", "value"],
+                name="unique_section_field_option",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.section_id} / {self.field_name}: {self.value}"
+
+
+class AutoFillMapping(models.Model):
+    section = models.ForeignKey(InventorySection, on_delete=models.CASCADE, related_name="auto_fill_mappings")
+    driver_value = models.CharField(max_length=500)
+    values = models.JSONField(default=dict)
+
+    class Meta:
+        ordering = ["section", "driver_value"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["section", "driver_value"],
+                name="unique_section_auto_fill_driver",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.section_id}: {self.driver_value}"
+
+
+class MutcdMapping(models.Model):
+    section = models.ForeignKey(InventorySection, on_delete=models.CASCADE, related_name="mutcd_mappings")
+    word_description = models.CharField(max_length=500)
+    mutcd_code = models.CharField(max_length=200, blank=True)
+    classification = models.CharField(max_length=300, blank=True)
+
+    class Meta:
+        ordering = ["section", "word_description"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["section", "word_description"],
+                name="unique_section_mutcd_word",
+            )
+        ]
+
+    def __str__(self):
+        return self.word_description
+
+
+class MutcdClassification(models.Model):
+    section = models.ForeignKey(InventorySection, on_delete=models.CASCADE, related_name="mutcd_classifications")
+    code = models.CharField(max_length=200)
+    classification = models.CharField(max_length=300)
+
+    class Meta:
+        ordering = ["section", "code"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["section", "code"],
+                name="unique_section_mutcd_class",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.code}: {self.classification}"
+
+
+class MutcdFallback(models.Model):
+    section = models.ForeignKey(InventorySection, on_delete=models.CASCADE, related_name="mutcd_fallbacks")
+    code = models.CharField(max_length=200)
+    word_description = models.CharField(max_length=500)
+
+    class Meta:
+        ordering = ["section", "code"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["section", "code"],
+                name="unique_section_mutcd_fallback",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.code}: {self.word_description}"
 
 
 class TabRecord(models.Model):
@@ -33,6 +138,11 @@ class TabRecord(models.Model):
 
 
 class TabState(models.Model):
+    """Legacy storage retained for migration compatibility.
+
+    Runtime configuration is served from InventorySection and the normalized
+    option/mapping tables above.
+    """
     tab = models.CharField(max_length=20, unique=True, db_index=True)
     options = models.JSONField(default=dict)
     mutcd_map = models.JSONField(default=dict)

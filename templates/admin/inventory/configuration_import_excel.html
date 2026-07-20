@@ -1,0 +1,60 @@
+{% extends "admin/base_site.html" %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a>
+  &rsaquo; <a href="{{ changelist_url }}">{{ opts.verbose_name_plural|capfirst }}</a>
+  &rsaquo; Import Excel
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="excel-import-layout">
+  <section class="excel-import-card">
+    <div class="excel-import-heading">
+      <div class="excel-import-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-8h-2v8H5V5h8v6h6V9zm-8 7H8v-2h3v-3h2v3h3v2h-3v3h-2v-3zm6-13v4h4l-4-4z"/></svg>
+      </div>
+      <div>
+        <h1>{{ title }}</h1>
+        <p>Add multiple configuration rows in one upload.</p>
+      </div>
+    </div>
+
+    {% if form.non_field_errors %}
+      <div class="import-errors" role="alert">
+        <strong>The workbook could not be imported.</strong>
+        {{ form.non_field_errors }}
+      </div>
+    {% endif %}
+
+    <form method="post" enctype="multipart/form-data" class="excel-import-form">
+      {% csrf_token %}
+      <div class="form-field">
+        <label for="{{ form.excel_file.id_for_label }}">{{ form.excel_file.label }}</label>
+        {{ form.excel_file }}
+        <p class="help">{{ form.excel_file.help_text }}</p>
+        {{ form.excel_file.errors }}
+      </div>
+      <div class="excel-form-actions">
+        <button type="submit" class="button">Import multiple rows</button>
+        <a href="{{ export_url }}" class="button button-secondary">Export All Data</a>
+        <a href="{{ changelist_url }}" class="button button-secondary">Cancel</a>
+      </div>
+    </form>
+  </section>
+
+  <aside class="excel-help-card">
+    <h2>How to bulk add</h2>
+    <ol>
+      <li><a href="{{ template_url }}">Download this table’s Excel template</a>.</li>
+      <li>Enter one new item per row.</li>
+      <li>Use the section key: sign, pavement, lane, or curb.</li>
+      <li>Keep the column headings unchanged.</li>
+      <li>Upload the completed workbook.</li>
+    </ol>
+    <p><a href="{{ export_url }}" class="button">Export all existing data</a></p>
+    <p>The import is atomic. If any row is invalid or already exists, no rows are added.</p>
+  </aside>
+</div>
+{% endblock %}

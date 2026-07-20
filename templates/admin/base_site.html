@@ -1,0 +1,233 @@
+{% extends "admin/base.html" %}
+{% load i18n static %}
+
+{% block title %}{{ title }} | Bluedome Inventory{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+  :root {
+    --primary: #4ade80; --secondary: #16a34a; --accent: #86efac;
+    --primary-fg: #052e16; --body-fg: #e5e7eb; --body-bg: #0f172a;
+    --body-quiet-color: #94a3b8; --body-loud-color: #f8fafc;
+    --header-color: #f8fafc; --header-branding-color: #4ade80;
+    --header-bg: #050a14; --header-link-color: #cbd5e1;
+    --breadcrumbs-fg: #cbd5e1; --breadcrumbs-link-fg: #86efac;
+    --breadcrumbs-bg: #111827; --link-fg: #4ade80;
+    --link-hover-color: #86efac; --link-selected-fg: #bbf7d0;
+    --hairline-color: #334155; --border-color: #475569;
+    --error-fg: #fca5a5; --message-success-bg: #14532d;
+    --message-warning-bg: #713f12; --message-error-bg: #7f1d1d;
+    --darkened-bg: #111827; --selected-bg: #1e3a2d;
+    --selected-row: #1e293b; --button-fg: #052e16;
+    --button-bg: #4ade80; --button-hover-bg: #86efac;
+    --default-button-bg: #16a34a; --default-button-hover-bg: #22c55e;
+    --close-button-bg: #475569; --close-button-hover-bg: #64748b;
+    --delete-button-bg: #b91c1c; --delete-button-hover-bg: #dc2626;
+    --object-tools-fg: #052e16; --object-tools-bg: #4ade80;
+    --object-tools-hover-bg: #86efac;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: #0f172a; }
+  body { color: #e5e7eb; font-family: "Segoe UI", Arial, sans-serif; }
+  #header { min-height: 64px; padding: 12px 24px; border-bottom: 1px solid #334155; }
+  #branding h1, #branding h1 a:link, #branding h1 a:visited {
+    color: #4ade80; font-size: 22px; font-weight: 800;
+  }
+  #user-tools { color: #94a3b8; font-size: 12px; }
+  #user-tools a { color: #e2e8f0; border-bottom-color: #64748b; }
+  div.breadcrumbs { padding: 12px 24px; }
+  #content { padding: 24px; }
+  .module, .inline-group, #changelist-filter, .submit-row {
+    border: 1px solid #334155; border-radius: 10px; overflow: hidden; background: #1e293b;
+  }
+  .module h2, .module caption, .inline-group h2 {
+    background: #111827; color: #4ade80; font-weight: 800;
+  }
+  #content-main .module table, #changelist .actions, #changelist .paginator,
+  #toolbar, .submit-row { background: #1e293b; }
+  #content-main .module tr, #content-main .module td, #content-main .module th {
+    border-color: #334155;
+  }
+  #toolbar { border-color: #334155; border-radius: 8px; }
+  input, textarea, select, .vTextField {
+    background: #0f172a !important; color: #fff !important;
+    border: 1px solid #475569 !important; border-radius: 6px !important; min-height: 38px;
+  }
+  input:focus, textarea:focus, select:focus {
+    border-color: #4ade80 !important; outline: 2px solid #4ade8033 !important;
+  }
+  input[type="submit"], button, .button, a.button {
+    background: #4ade80 !important; color: #052e16 !important;
+    border: 0 !important; border-radius: 7px !important; font-weight: 800;
+    min-height: 44px; padding: 10px 16px; line-height: 1.2;
+    transition: background-color .18s ease, border-color .18s ease, transform .08s ease;
+  }
+  input[type="submit"]:hover, button:hover, .button:hover, a.button:hover {
+    background: #86efac !important;
+  }
+  .deletelink { background: #b91c1c !important; color: #fff !important; }
+  button:active, .button:active, input[type="submit"]:active { transform: translateY(1px); }
+  a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible,
+  textarea:focus-visible {
+    outline: 3px solid #4ade8066 !important; outline-offset: 2px;
+  }
+  .object-tools a { border-radius: 6px; }
+  .bulk-form-banner {
+    display: flex; align-items: center; justify-content: space-between; gap: 18px;
+    margin: 0 0 20px; padding: 16px 18px; border: 1px solid #16a34a;
+    border-radius: 9px; background: #14532d55;
+  }
+  .bulk-form-banner strong { display: block; margin-bottom: 4px; color: #86efac; }
+  .bulk-form-banner span { color: #cbd5e1; }
+  .bulk-form-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+  .bulk-form-actions .button { display: inline-flex; align-items: center; margin: 0; }
+  .row-action {
+    display: inline-flex; width: 34px; height: 34px; align-items: center;
+    justify-content: center; margin: 2px 5px 2px 0; border-radius: 7px;
+    text-decoration: none; vertical-align: middle;
+  }
+  .row-action svg, .icon-delete svg { width: 18px; height: 18px; fill: currentColor; }
+  .row-action-edit { background: #4ade80; color: #052e16 !important; }
+  .row-action-edit:hover { background: #86efac; }
+  .row-action-delete { background: #b91c1c; color: #fff !important; }
+  .row-action-delete:hover { background: #dc2626; }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+  .submit-row a.deletelink.icon-delete {
+    float: right; display: inline-flex; width: 48px !important;
+    min-width: 48px; height: 48px !important; min-height: 48px;
+    align-items: center; justify-content: center; margin: 0;
+    padding: 0 !important; border: 0 !important;
+    border-radius: 7px !important; background: #b91c1c !important;
+    color: #fff !important; line-height: 1 !important; box-shadow: none;
+    vertical-align: middle;
+  }
+  .submit-row a.deletelink.icon-delete:hover {
+    background: #dc2626 !important; color: #fff !important;
+  }
+  .confirmation-card {
+    width: min(680px, 100%); margin: 16px auto; padding: 32px;
+    border: 1px solid #334155; border-radius: 14px; background: #1e293b;
+    box-shadow: 0 20px 50px #0206174d;
+  }
+  .confirmation-card h1 { margin: 10px 0 12px; color: #f8fafc; font-size: 28px; }
+  .confirmation-lead { color: #cbd5e1; font-size: 16px; line-height: 1.6; }
+  .confirmation-icon {
+    display: grid; width: 54px; height: 54px; place-items: center;
+    border-radius: 50%; font-size: 28px; font-weight: 900;
+  }
+  .confirmation-icon svg { width: 26px; height: 26px; fill: currentColor; }
+  .confirmation-icon-danger { background: #7f1d1d; color: #fecaca; }
+  .confirmation-icon-warning { background: #713f12; color: #fde68a; }
+  .deletion-details {
+    margin: 22px 0; padding: 14px 16px; border: 1px solid #475569;
+    border-radius: 8px; background: #0f172a;
+  }
+  .deletion-details summary { color: #cbd5e1; cursor: pointer; font-weight: 700; }
+  .deletion-details h2 { color: #e2e8f0; font-size: 16px; }
+  .confirmation-actions { display: flex; gap: 12px; margin-top: 24px; flex-wrap: wrap; }
+  .confirmation-actions input.button-danger {
+    background: #b91c1c !important; color: #fff !important; min-width: 180px;
+  }
+  .confirmation-actions input.button-danger:hover { background: #dc2626 !important; }
+  .confirmation-actions a.button-secondary {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 120px; background: #334155 !important; color: #f8fafc !important;
+    text-decoration: none;
+  }
+  .confirmation-actions a.button-secondary:hover { background: #475569 !important; }
+  .excel-action {
+    display: inline-flex !important; align-items: center; gap: 7px;
+  }
+  .excel-action svg { width: 17px; height: 17px; fill: currentColor; }
+  .excel-import-layout {
+    display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+    gap: 20px; align-items: start;
+  }
+  .excel-import-card, .excel-help-card {
+    padding: 26px; border: 1px solid #334155; border-radius: 12px; background: #1e293b;
+  }
+  .excel-import-heading { display: flex; gap: 16px; align-items: center; margin-bottom: 24px; }
+  .excel-import-heading h1 { margin: 0 0 5px; color: #f8fafc; }
+  .excel-import-heading p { margin: 0; color: #94a3b8; }
+  .excel-import-icon {
+    display: grid; flex: 0 0 52px; width: 52px; height: 52px;
+    place-items: center; border-radius: 10px; background: #14532d; color: #86efac;
+  }
+  .excel-import-icon svg { width: 27px; height: 27px; fill: currentColor; }
+  .excel-import-form { display: grid; gap: 20px; }
+  .form-field label { display: block; margin-bottom: 7px; color: #cbd5e1; font-weight: 800; }
+  .form-field select, .form-field input[type="file"] { width: 100%; }
+  .form-field input[type="file"] { padding: 9px; }
+  .form-field .help { margin: 7px 0 0; color: #94a3b8; }
+  .errorlist { color: #fca5a5; }
+  .import-errors {
+    margin-bottom: 20px; padding: 14px 16px; border: 1px solid #b91c1c;
+    border-radius: 8px; background: #450a0a; color: #fecaca;
+  }
+  .import-errors .errorlist { margin-bottom: 0; }
+  .excel-form-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .excel-form-actions .button { display: inline-flex; align-items: center; justify-content: center; }
+  .excel-form-actions .button-secondary { background: #334155 !important; color: #fff !important; }
+  .excel-help-card h2 { margin-top: 0; color: #4ade80; }
+  .excel-help-card ol { padding-left: 22px; color: #cbd5e1; line-height: 1.8; }
+  .excel-help-card p { color: #94a3b8; line-height: 1.5; }
+  #nav-sidebar { background: #111827; border-color: #334155; }
+  #nav-sidebar .current-model { background: #1e3a2d; }
+  #nav-filter { background: #0f172a !important; }
+  .login { background: #0f172a; }
+  .login #container {
+    width: min(440px, calc(100% - 24px)); margin: 8vh auto 0;
+    border: 1px solid #334155; border-radius: 14px; overflow: hidden;
+    background: #1e293b; box-shadow: 0 20px 50px #02061766;
+  }
+  .login #header { justify-content: center; padding: 22px; }
+  .login #content { padding: 28px 32px 32px; }
+  .login .form-row { padding: 10px 0; }
+  .login .form-row label { color: #cbd5e1; font-weight: 700; }
+  .login .form-row input { width: 100%; min-height: 44px; font-size: 16px; }
+  .login .submit-row { border: 0; padding: 16px 0 0; text-align: stretch; }
+  .login .submit-row input { width: 100%; min-height: 44px; }
+  @media (max-width: 767px) {
+    #header { padding: 12px 14px; }
+    #branding { width: 100%; }
+    #branding h1 { font-size: 19px; }
+    #user-tools { margin-top: 8px; line-height: 1.8; }
+    div.breadcrumbs { padding: 10px 14px; overflow-x: auto; white-space: nowrap; }
+    #content { padding: 14px 10px; }
+    #content h1 { font-size: 22px; }
+    .object-tools { float: none; margin: 0 0 14px; }
+    .object-tools li { display: block; margin: 5px 0; }
+    .object-tools a { display: block; text-align: center; }
+    #changelist .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    #changelist .actions label { width: 100%; }
+    .login #container { margin-top: 20px; }
+    .login #content { padding: 22px 18px 26px; }
+    .submit-row a.deletelink.icon-delete {
+      float: none; width: 100% !important; margin-top: 10px;
+    }
+    .confirmation-card { margin: 0; padding: 22px 18px; }
+    .confirmation-card h1 { font-size: 23px; }
+    .confirmation-actions { flex-direction: column; }
+    .confirmation-actions input, .confirmation-actions a { width: 100%; }
+    .bulk-form-banner, .bulk-form-actions { align-items: stretch; flex-direction: column; }
+    .bulk-form-actions .button { justify-content: center; width: 100%; }
+    .excel-import-layout { grid-template-columns: 1fr; }
+    .excel-import-card, .excel-help-card { padding: 20px 16px; }
+    .excel-import-heading { align-items: flex-start; }
+    .excel-form-actions { flex-direction: column; }
+    .excel-form-actions .button { width: 100%; }
+  }
+</style>
+{% endblock %}
+
+{% block branding %}
+<div id="branding">
+  <h1 id="site-name"><a href="{% url 'admin:index' %}">Bluedome Inventory</a></h1>
+</div>
+{% endblock %}
+
+{% block nav-global %}{% endblock %}

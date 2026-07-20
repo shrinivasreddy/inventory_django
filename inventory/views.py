@@ -2,17 +2,36 @@ import io
 import json
 import threading
 from datetime import date
+from functools import wraps
 
+from django.contrib.auth import get_user_model, login
+from django.contrib.auth.decorators import login_required
+from django.contrib.auth.password_validation import get_default_password_validators
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.http import JsonResponse, HttpResponseNotAllowed, HttpResponse
-from django.shortcuts import render
-from django.views.decorators.csrf import csrf_exempt
+from django.shortcuts import redirect, render
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
+from django.views.decorators.cache import never_cache
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
-from .models import TabRecord, TabState
-from .specs import SPECS, TAB_ORDER, compute_auto_fields, missing_required_fields, build_reverse_map
+from .models import (
+    AutoFillMapping,
+    DropdownOption,
+    MutcdClassification,
+    MutcdMapping,
+    TabRecord,
+)
+from .forms import SignUpForm
+from .specs import (
+    TAB_ORDER,
+    compute_auto_fields,
+    get_section_state,
+    get_spec,
+    missing_required_fields,
+)
 
 # One lock per tab, held around every read-modify-write sequence, same
 # rationale as the Flask version: with a single-process WSGI deployment
@@ -20,7 +39,18 @@ from .specs import SPECS, TAB_ORDER, compute_auto_fields, missing_required_field
 # concurrent requests from racing on ID generation or a renumber. Django's
 # own transaction.atomic() gives us automatic rollback-on-exception on top
 # of that, which the Flask/JSON-file version had to do by hand.
-locks = {key: threading.Lock() for key in SPECS}
+locks = {key: threading.Lock() for key in TAB_ORDER}
+
+
+def api_login_required(view):
+    """Return a machine-readable 401 for API clients instead of an HTML
+    redirect to the login form."""
+    @wraps(view)
+    def wrapped(request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return JsonResponse({"error": "Authentication required."}, status=401)
+        return view(request, *args, **kwargs)
+    return wrapped
 
 
 def parse_json_body(request):
@@ -28,35 +58,6 @@ def parse_json_body(request):
         return json.loads(request.body or b"{}")
     except (json.JSONDecodeError, UnicodeDecodeError):
         return {}
-
-
-def get_tab_state(key):
-    """Get-or-create the TabState row for this tab, seeded from the spec's
-    defaults on first access -- the DB equivalent of the Flask version's
-    load_json(path, default) fallback."""
-    spec = SPECS[key]
-    ts, created = TabState.objects.get_or_create(
-        tab=key,
-        defaults={
-            "options": spec["default_options"],
-            "mutcd_map": spec.get("mutcd_link", {}).get("default_map", {}),
-            "mutcd_to_class": spec.get("mutcd_link", {}).get("default_class", {}),
-            "mutcd_word_fallback": spec.get("mutcd_link", {}).get("default_word_fallback", {}),
-            "type_map": spec.get("auto_fill_map", {}).get("default_map", {}),
-        },
-    )
-    if created and spec.get("mutcd_link"):
-        ts.mutcd_reverse_map = build_reverse_map(ts.mutcd_map, ts.mutcd_word_fallback)
-        ts.save(update_fields=["mutcd_reverse_map"])
-    return ts
-
-
-def tab_state_as_dict(ts):
-    return {
-        "options": ts.options, "mutcd_map": ts.mutcd_map, "mutcd_to_class": ts.mutcd_to_class,
-        "mutcd_word_fallback": ts.mutcd_word_fallback, "mutcd_reverse_map": ts.mutcd_reverse_map,
-        "type_map": ts.type_map,
-    }
 
 
 def next_tab_id(key):
@@ -80,19 +81,58 @@ def renumber_tab_ids(key):
 # ---------------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------------
+@require_http_methods(["GET", "POST"])
+def signup(request):
+    if request.user.is_authenticated:
+        return redirect("home")
+    if request.method == "POST":
+        form = SignUpForm(request.POST)
+        if form.is_valid():
+            user = form.save()
+            login(request, user)
+            return redirect("home")
+    else:
+        form = SignUpForm()
+    return render(request, "registration/signup.html", {"form": form})
+
+
+@require_POST
+def password_requirements(request):
+    data = parse_json_body(request)
+    password = str(data.get("password") or "")
+    user = get_user_model()(
+        username=str(data.get("username") or ""),
+        email=str(data.get("email") or ""),
+    )
+    checks = {}
+    for validator in get_default_password_validators():
+        key = validator.__class__.__name__
+        try:
+            validator.validate(password, user)
+            checks[key] = True
+        except ValidationError:
+            checks[key] = False
+    return JsonResponse({"checks": checks})
+
+
+@login_required
+@require_GET
 def home(request):
-    tabs = [{"key": k, "label": SPECS[k]["tab_label"]} for k in TAB_ORDER]
+    tabs = [{"key": k, "label": get_spec(k)["tab_label"]} for k in TAB_ORDER]
     return render(request, "index.html", {"tabs_json": json.dumps(tabs)})
 
 
 # ---------------------------------------------------------------------------
 # Spec
 # ---------------------------------------------------------------------------
+@api_login_required
+@require_GET
+@never_cache
 def api_spec(request, key):
-    if key not in SPECS:
+    if key not in TAB_ORDER:
         return JsonResponse({"error": "Unknown tab"}, status=404)
-    spec = SPECS[key]
-    ts = get_tab_state(key)
+    spec = get_spec(key)
+    state = get_section_state(key)
     return JsonResponse({
         "key": key,
         "columns": spec["columns"],
@@ -110,25 +150,26 @@ def api_spec(request, key):
         "sticky_fields": spec["sticky_fields"],
         "banner_title": spec["banner_title"],
         "banner_subtitle": spec["banner_subtitle"],
-        "options": ts.options,
-        "mutcd_map": ts.mutcd_map,
-        "mutcd_to_class": ts.mutcd_to_class,
-        "mutcd_reverse_map": ts.mutcd_reverse_map,
+        "options": state["options"],
+        "mutcd_map": state["mutcd_map"],
+        "mutcd_to_class": state["mutcd_to_class"],
+        "mutcd_reverse_map": state["mutcd_reverse_map"],
         "auto_fill_map": spec.get("auto_fill_map"),
-        "type_map": ts.type_map,
+        "type_map": state["type_map"],
         "conditional_dropdowns": spec.get("conditional_dropdowns", {}),
         "default_field_values": spec.get("default_field_values", {}),
+        "can_manage_configuration": request.user.is_staff,
     })
 
 
 # ---------------------------------------------------------------------------
 # Records: GET (list) / POST (add) / DELETE (delete-all)
 # ---------------------------------------------------------------------------
-@csrf_exempt
+@api_login_required
 def api_records(request, key):
-    if key not in SPECS:
+    if key not in TAB_ORDER:
         return JsonResponse({"error": "Unknown tab"}, status=404)
-    spec = SPECS[key]
+    spec = get_spec(key)
 
     if request.method == "GET":
         with locks[key]:
@@ -146,7 +187,7 @@ def api_records(request, key):
         row.pop("ID", None)
 
         with locks[key]:
-            ts_dict = tab_state_as_dict(get_tab_state(key))
+            ts_dict = get_section_state(key)
             row = compute_auto_fields(key, row, ts_dict)
             missing = missing_required_fields(key, row)
             if missing:
@@ -174,11 +215,11 @@ def api_records(request, key):
 # ---------------------------------------------------------------------------
 # Single record: PUT (update) / DELETE
 # ---------------------------------------------------------------------------
-@csrf_exempt
+@api_login_required
 def api_record_detail(request, key, rec_id):
-    if key not in SPECS:
+    if key not in TAB_ORDER:
         return JsonResponse({"error": "Unknown tab"}, status=404)
-    spec = SPECS[key]
+    spec = get_spec(key)
 
     if request.method == "PUT":
         body = parse_json_body(request)
@@ -194,7 +235,7 @@ def api_record_detail(request, key, rec_id):
             except TabRecord.DoesNotExist:
                 return JsonResponse({"error": "Record not found"}, status=404)
 
-            ts_dict = tab_state_as_dict(get_tab_state(key))
+            ts_dict = get_section_state(key)
             row = compute_auto_fields(key, row, ts_dict)
             missing = missing_required_fields(key, row)
             if missing:
@@ -228,13 +269,18 @@ def api_record_detail(request, key, rec_id):
 # ---------------------------------------------------------------------------
 # Dropdown "+" add option
 # ---------------------------------------------------------------------------
-@csrf_exempt
+@api_login_required
 def api_options(request, key):
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
-    if key not in SPECS:
+    if not request.user.is_staff:
+        return JsonResponse(
+            {"error": "Administrator permission is required."},
+            status=403,
+        )
+    if key not in TAB_ORDER:
         return JsonResponse({"error": "Unknown tab"}, status=404)
-    spec = SPECS[key]
+    spec = get_spec(key)
 
     data = parse_json_body(request)
     field = data.get("field")
@@ -247,42 +293,64 @@ def api_options(request, key):
         value = value.upper()
 
     with locks[key]:
-        ts = get_tab_state(key)
-        opts = ts.options.setdefault(field, [])
-        if value not in opts:
-            opts.append(value)
-            ts.save(update_fields=["options"])
-
-        result = {"field": field, "value": value, "options": ts.options[field]}
+        DropdownOption.objects.get_or_create(
+            section_id=key,
+            field_name=field,
+            value=value,
+            defaults={
+                "sort_order": DropdownOption.objects.filter(
+                    section_id=key, field_name=field
+                ).count()
+            },
+        )
+        state = get_section_state(key)
+        result = {"field": field, "value": value, "options": state["options"].get(field, [])}
 
         ml = spec.get("mutcd_link")
-        if ml and field == ml["code_field"] and value not in ts.mutcd_to_class:
+        if ml and field == ml["code_field"] and value not in state["mutcd_to_class"]:
             classification = str(data.get("classification") or "").strip()
-            ts.mutcd_to_class[value] = classification
-            ts.save(update_fields=["mutcd_to_class"])
+            MutcdClassification.objects.get_or_create(
+                section_id=key,
+                code=value,
+                defaults={"classification": classification},
+            )
             result["mutcd_to_class_entry"] = {"code": value, "classification": classification}
 
-        elif ml and field == ml["word_field"] and value not in ts.mutcd_map:
+        elif ml and field == ml["word_field"] and value not in state["mutcd_map"]:
             mutcd_code = str(data.get("mutcd_code") or "").strip()
-            classification = ts.mutcd_to_class.get(mutcd_code, "")
+            classification = state["mutcd_to_class"].get(mutcd_code, "")
             if mutcd_code and not classification:
                 classification = str(data.get("classification") or "").strip()
                 if classification:
-                    ts.mutcd_to_class[mutcd_code] = classification
-                    ts.save(update_fields=["mutcd_to_class"])
-            ts.mutcd_map[value] = {"MUTCD": mutcd_code, "MUTCD_CLASSIFICATION": classification}
-            ts.mutcd_reverse_map = build_reverse_map(ts.mutcd_map, ts.mutcd_word_fallback)
-            ts.save(update_fields=["mutcd_map", "mutcd_reverse_map"])
-            result["mutcd_map_entry"] = {"word": value, **ts.mutcd_map[value]}
-            result["mutcd_reverse_map"] = ts.mutcd_reverse_map
+                    MutcdClassification.objects.update_or_create(
+                        section_id=key,
+                        code=mutcd_code,
+                        defaults={"classification": classification},
+                    )
+            MutcdMapping.objects.create(
+                section_id=key,
+                word_description=value,
+                mutcd_code=mutcd_code,
+                classification=classification,
+            )
+            result["mutcd_map_entry"] = {
+                "word": value,
+                "MUTCD": mutcd_code,
+                "MUTCD_CLASSIFICATION": classification,
+            }
+            refreshed = get_section_state(key)
+            result["mutcd_reverse_map"] = refreshed["mutcd_reverse_map"]
 
         afm = spec.get("auto_fill_map")
-        if afm and field == afm["driver_field"] and value not in ts.type_map:
+        if afm and field == afm["driver_field"] and value not in state["type_map"]:
             entry = {}
             for dep_field in afm["dependent_fields"]:
                 entry[dep_field] = str(data.get(f"dep_{dep_field}") or "").strip()
-            ts.type_map[value] = entry
-            ts.save(update_fields=["type_map"])
+            AutoFillMapping.objects.create(
+                section_id=key,
+                driver_value=value,
+                values=entry,
+            )
             result["type_map_entry"] = {"driver_value": value, "fields": entry}
 
     return JsonResponse(result)
@@ -292,7 +360,7 @@ def api_options(request, key):
 # Excel export
 # ---------------------------------------------------------------------------
 def write_sheet(key, ws, records):
-    spec = SPECS[key]
+    spec = get_spec(key)
     columns = spec["columns"]
 
     header_font = Font(bold=True, color="FFFFFF")
@@ -362,10 +430,12 @@ def _xlsx_response(wb, filename):
     return resp
 
 
+@api_login_required
+@require_GET
 def api_export(request, key):
-    if key not in SPECS:
+    if key not in TAB_ORDER:
         return JsonResponse({"error": "Unknown tab"}, status=404)
-    spec = SPECS[key]
+    spec = get_spec(key)
     with locks[key]:
         records = [r.as_row() for r in TabRecord.objects.filter(tab=key).order_by("tab_record_id")]
     if not records:
@@ -380,6 +450,8 @@ def api_export(request, key):
     return _xlsx_response(wb, filename)
 
 
+@api_login_required
+@require_GET
 def api_export_all(request):
     snapshots = {}
     for key in TAB_ORDER:
@@ -393,7 +465,7 @@ def api_export_all(request):
         if not snapshots[key]:
             continue
         any_data = True
-        ws = wb.create_sheet(title=SPECS[key]["export_sheet_name"])
+        ws = wb.create_sheet(title=get_spec(key)["export_sheet_name"])
         write_sheet(key, ws, snapshots[key])
     if not any_data:
         return JsonResponse({"error": "There are no records in any tab to export yet."}, status=400)

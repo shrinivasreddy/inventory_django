@@ -1,0 +1,59 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static %}
+
+{% block extrahead %}
+  {{ block.super }}
+  {{ media }}
+  <script src="{% static 'admin/js/cancel.js' %}" async></script>
+{% endblock %}
+
+{% block bodyclass %}{{ block.super }} app-{{ opts.app_label }} model-{{ opts.model_name }} delete-confirmation{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a>
+  &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+  &rsaquo; <a href="{% url opts|admin_urlname:'changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+  &rsaquo; Delete
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="confirmation-card">
+  {% if perms_lacking %}
+    <div class="confirmation-icon confirmation-icon-warning" aria-hidden="true">!</div>
+    <h1>Deletion not permitted</h1>
+    <p>Your account does not have permission to delete the related object types listed below.</p>
+    <ul id="deleted-objects">{{ perms_lacking|unordered_list }}</ul>
+  {% elif protected %}
+    <div class="confirmation-icon confirmation-icon-warning" aria-hidden="true">!</div>
+    <h1>Unable to delete</h1>
+    <p>This item is protected because it is used by the related objects listed below.</p>
+    <ul id="deleted-objects">{{ protected|unordered_list }}</ul>
+  {% else %}
+    <div class="confirmation-icon confirmation-icon-danger" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM8 9h8v10H8V9zm7.5-5-1-1h-5l-1 1H5v2h14V4z"/></svg>
+    </div>
+    <h1>Delete {{ object_name }}?</h1>
+    <p class="confirmation-lead">
+      You are about to permanently delete <strong>{{ object }}</strong>.
+      This action cannot be undone.
+    </p>
+    <details class="deletion-details">
+      <summary>View affected objects</summary>
+      {% include "admin/includes/object_delete_summary.html" %}
+      <ul id="deleted-objects">{{ deleted_objects|unordered_list }}</ul>
+    </details>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="post" value="yes">
+      {% if is_popup %}<input type="hidden" name="{{ is_popup_var }}" value="1">{% endif %}
+      {% if to_field %}<input type="hidden" name="{{ to_field_var }}" value="{{ to_field }}">{% endif %}
+      <div class="confirmation-actions">
+        <input class="button-danger" type="submit" value="Delete permanently">
+        <a href="#" class="button cancel-link button-secondary">Cancel</a>
+      </div>
+    </form>
+  {% endif %}
+</div>
+{% endblock %}

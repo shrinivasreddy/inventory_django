@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign up | Inventory Web</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px;
+      background: #0f172a; color: #e5e7eb; font-family: "Segoe UI", Arial, sans-serif; }
+    .card { width: 100%; max-width: 460px; padding: 32px; border: 1px solid #334155;
+      border-radius: 14px; background: #1e293b; box-shadow: 0 20px 50px #02061766; }
+    h1 { margin: 0 0 8px; color: #4ade80; font-size: 28px; }
+    .subtitle { margin: 0 0 20px; color: #94a3b8; }
+    label { display: block; margin: 13px 0 6px; color: #cbd5e1; font-size: 13px; font-weight: 700; }
+    input { width: 100%; padding: 11px; border: 1px solid #475569; border-radius: 7px;
+      background: #0f172a; color: #fff; font-size: 15px; }
+    input:focus { outline: 2px solid #4ade80; border-color: transparent; }
+    button { width: 100%; margin-top: 22px; padding: 12px; border: 0; border-radius: 7px;
+      background: #4ade80; color: #052e16; font-weight: 800; cursor: pointer; min-height: 44px;
+      transition: background-color .18s ease, transform .08s ease; }
+    button:hover { background: #86efac; }
+    button:active { transform: translateY(1px); }
+    .errorlist { margin: 6px 0 0; padding-left: 20px; color: #fca5a5; font-size: 13px; }
+    .helptext { display: block; margin-top: 5px; color: #94a3b8; font-size: 12px; }
+    .password-checklist { list-style: none; margin: 12px 0 4px; padding: 0; display: grid; gap: 7px; }
+    .password-checklist li { display: flex; gap: 8px; align-items: flex-start; color: #94a3b8;
+      font-size: 13px; line-height: 1.35; transition: color .2s ease; }
+    .password-checklist li::before { content: "○"; flex: 0 0 16px; color: #64748b;
+      font-size: 15px; font-weight: 800; line-height: 1.1; }
+    .password-checklist li.valid { color: #86efac; }
+    .password-checklist li.valid::before { content: "✓"; color: #4ade80; }
+    .password-checklist li.invalid { color: #fca5a5; }
+    .password-checklist li.invalid::before { content: "×"; color: #f87171; }
+    .footer { margin: 20px 0 0; text-align: center; color: #94a3b8; font-size: 14px; }
+    a { color: #4ade80; }
+    @media (max-width: 520px) {
+      body { padding: 12px; align-items: start; }
+      .card { padding: 22px 18px; border-radius: 10px; }
+      h1 { font-size: 24px; }
+      input { min-height: 44px; font-size: 16px; }
+      .helptext, .password-checklist li { overflow-wrap: anywhere; }
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Create account</h1>
+    <p class="subtitle">Your account is stored securely in the application database.</p>
+    <form method="post">
+      {% csrf_token %}
+      {% for field in form %}
+        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {{ field }}
+        {% if field.name == "password1" %}
+          <ul class="password-checklist" id="password-checklist" aria-live="polite">
+            <li data-validator="UserAttributeSimilarityValidator">Different from your username and email</li>
+            <li data-validator="MinimumLengthValidator">At least 8 characters</li>
+            <li data-validator="CommonPasswordValidator">Not a commonly used password</li>
+            <li data-validator="NumericPasswordValidator">Not entirely numeric</li>
+            <li data-validator="passwords-match">Password confirmation matches</li>
+          </ul>
+        {% elif field.help_text %}
+          <span class="helptext">{{ field.help_text }}</span>
+        {% endif %}
+        {{ field.errors }}
+      {% endfor %}
+      <button type="submit">Sign up</button>
+    </form>
+    <p class="footer">Already registered? <a href="{% url 'login' %}">Log in</a></p>
+  </main>
+  <script>
+    (function () {
+      var password = document.getElementById('id_password1');
+      var confirmation = document.getElementById('id_password2');
+      var username = document.getElementById('id_username');
+      var email = document.getElementById('id_email');
+      var csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+      var timer = null;
+      var requestNumber = 0;
+
+      function setRule(name, valid, hasValue) {
+        var item = document.querySelector('[data-validator="' + name + '"]');
+        if (!item) return;
+        item.classList.toggle('valid', hasValue && valid);
+        item.classList.toggle('invalid', hasValue && !valid);
+      }
+
+      function updateMatch() {
+        var hasValue = password.value.length > 0 || confirmation.value.length > 0;
+        setRule('passwords-match', password.value === confirmation.value && confirmation.value.length > 0, hasValue);
+      }
+
+      function updateEmailValidity() {
+        if (!email.value) {
+          email.setCustomValidity('');
+          return;
+        }
+        var valid = /^[^@\s]+@[^@\s]+\.[^@\s]{2,}$/.test(email.value);
+        email.setCustomValidity(valid ? '' : 'Enter a valid email address, for example name@example.com.');
+      }
+
+      function validatePassword() {
+        window.clearTimeout(timer);
+        updateEmailValidity();
+        updateMatch();
+        if (!password.value) {
+          document.querySelectorAll('#password-checklist li:not([data-validator="passwords-match"])')
+            .forEach(function (item) { item.classList.remove('valid', 'invalid'); });
+          return;
+        }
+        timer = window.setTimeout(function () {
+          var currentRequest = ++requestNumber;
+          fetch('{% url "password_requirements" %}', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+            body: JSON.stringify({
+              password: password.value,
+              username: username.value,
+              email: email.value
+            })
+          }).then(function (response) {
+            if (!response.ok) throw new Error('Password validation failed.');
+            return response.json();
+          }).then(function (data) {
+            if (currentRequest !== requestNumber) return;
+            Object.keys(data.checks).forEach(function (name) {
+              setRule(name, data.checks[name], true);
+            });
+          }).catch(function () {
+            // The form remains fully server-validated if this optional UI check fails.
+          });
+        }, 250);
+      }
+
+      [password, username, email].forEach(function (field) {
+        field.addEventListener('input', validatePassword);
+      });
+      confirmation.addEventListener('input', updateMatch);
+      email.addEventListener('blur', function () { email.reportValidity(); });
+    }());
+  </script>
+</body>
+</html>
