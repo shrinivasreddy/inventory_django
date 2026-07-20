@@ -1,11 +1,14 @@
+import io
 import re
 
 from django.core import mail
 from django.contrib.auth.models import User
 from django.test import Client, TestCase, override_settings
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
+from openpyxl import Workbook, load_workbook
 
-from .models import DropdownOption, InventorySection, MutcdMapping
+from .models import DropdownOption, InventorySection, MutcdMapping, TabRecord
 
 
 class AuthenticationTests(TestCase):
@@ -356,6 +359,169 @@ class DatabaseConfigurationTests(TestCase):
             reverse("admin:inventory_mutcdmapping_changelist"),
         )
         self.assertFalse(MutcdMapping.objects.filter(pk=mapping.pk).exists())
+
+    @staticmethod
+    def _excel_upload(section_key, rows):
+        from .specs import get_spec
+
+        spec = get_spec(section_key)
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.append(spec["columns"])
+        for values in rows:
+            worksheet.append([values.get(column, "") for column in spec["columns"]])
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        return SimpleUploadedFile(
+            "inventory-import.xlsx",
+            buffer.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    def test_admin_can_bulk_import_valid_excel_records(self):
+        self.client.force_login(self.admin_user)
+        upload = self._excel_upload(
+            "sign",
+            [
+                {"ST_ID": "100", "POLE_ID": "P1", "SIGN": "S1", "STREET_NAME": "FIRST ST"},
+                {"ST_ID": "100", "POLE_ID": "P2", "SIGN": "S2", "STREET_NAME": "SECOND ST"},
+            ],
+        )
+        response = self.client.post(
+            reverse("admin:inventory_tabrecord_import_excel"),
+            {"section": "sign", "excel_file": upload},
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Successfully imported 2 Sign Inventory records")
+        imported = list(TabRecord.objects.filter(tab="sign").order_by("tab_record_id"))
+        self.assertEqual(len(imported), 2)
+        self.assertEqual(imported[0].data["SIGN_UID"], "SR_100_P1_S1")
+        self.assertEqual(imported[1].data["SIGN_UID"], "SR_100_P2_S2")
+
+    def test_admin_can_bulk_import_mutcd_mappings(self):
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.append(["Section", "Word description", "MUTCD code", "Classification"])
+        worksheet.append(["sign", "Bulk sign one", "B-1", "Warning"])
+        worksheet.append(["sign", "Bulk sign two", "B-2", "Regulatory"])
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        upload = SimpleUploadedFile(
+            "mutcd-mappings.xlsx",
+            buffer.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.client.force_login(self.admin_user)
+        response = self.client.post(
+            reverse("admin:inventory_mutcdmapping_import_excel"),
+            {"excel_file": upload},
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Successfully imported 2 mutcd mappings")
+        self.assertTrue(
+            MutcdMapping.objects.filter(
+                section_id="sign",
+                word_description="Bulk sign one",
+                mutcd_code="B-1",
+            ).exists()
+        )
+
+    def test_empty_configuration_workbook_is_rejected(self):
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.append(["Section", "Word description", "MUTCD code", "Classification"])
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        upload = SimpleUploadedFile(
+            "empty-mutcd-mappings.xlsx",
+            buffer.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.client.force_login(self.admin_user)
+        response = self.client.post(
+            reverse("admin:inventory_mutcdmapping_import_excel"),
+            {"excel_file": upload},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "The workbook does not contain any data rows.")
+
+    def test_mutcd_mapping_admin_shows_bulk_excel_controls(self):
+        self.client.force_login(self.admin_user)
+        response = self.client.get(
+            reverse("admin:inventory_mutcdmapping_changelist")
+        )
+        self.assertContains(response, "Import Excel")
+        self.assertContains(response, "Download Template")
+        self.assertContains(response, "Export All")
+        add_response = self.client.get(
+            reverse("admin:inventory_mutcdmapping_add")
+        )
+        self.assertContains(add_response, "Import Multiple via Excel")
+        import_response = self.client.get(
+            reverse("admin:inventory_mutcdmapping_import_excel")
+        )
+        self.assertContains(import_response, "Export All Data")
+        self.assertContains(
+            import_response,
+            reverse("admin:inventory_mutcdmapping_export_excel"),
+        )
+
+    def test_invalid_excel_import_is_atomic(self):
+        self.client.force_login(self.admin_user)
+        upload = self._excel_upload(
+            "sign",
+            [
+                {"ST_ID": "100", "POLE_ID": "P1", "SIGN": "S1"},
+                {"ST_ID": "100", "POLE_ID": "", "SIGN": "S2"},
+            ],
+        )
+        response = self.client.post(
+            reverse("admin:inventory_tabrecord_import_excel"),
+            {"section": "sign", "excel_file": upload},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Row 3: missing required values POLE_ID")
+        self.assertEqual(TabRecord.objects.filter(tab="sign").count(), 0)
+
+    def test_admin_excel_template_and_full_export(self):
+        self.client.force_login(self.admin_user)
+        template_response = self.client.get(
+            reverse("admin:inventory_tabrecord_excel_template")
+        )
+        self.assertEqual(template_response.status_code, 200)
+        template_book = load_workbook(io.BytesIO(template_response.content), read_only=True)
+        self.assertEqual(
+            template_book.sheetnames,
+            ["Sign Inventory", "Pavement Inventory", "Lane Inventory", "Curb Inventory"],
+        )
+        self.assertEqual(template_book["Sign Inventory"]["A1"].value, "ID")
+
+        TabRecord.objects.create(
+            tab="sign",
+            tab_record_id=1,
+            data={"ST_ID": "100", "POLE_ID": "P1", "SIGN": "S1", "SIGN_UID": "SR_100_P1_S1"},
+        )
+        export_response = self.client.get(
+            reverse("admin:inventory_tabrecord_export_excel")
+        )
+        self.assertEqual(export_response.status_code, 200)
+        self.assertEqual(export_response["X-Record-Count"], "1")
+        export_book = load_workbook(io.BytesIO(export_response.content), read_only=True)
+        sign_sheet = export_book["Sign Inventory"]
+        self.assertEqual(sign_sheet["A2"].value, 1)
+        self.assertEqual(sign_sheet["B2"].value, "100")
+
+    def test_regular_user_cannot_access_admin_excel_tools(self):
+        self.client.force_login(self.user)
+        for url_name in (
+            "admin:inventory_tabrecord_import_excel",
+            "admin:inventory_tabrecord_excel_template",
+            "admin:inventory_tabrecord_export_excel",
+        ):
+            response = self.client.get(reverse(url_name))
+            self.assertEqual(response.status_code, 302)
 
     def test_only_admin_role_can_add_reference_options(self):
         self.client.force_login(self.user)

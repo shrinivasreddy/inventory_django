@@ -73,6 +73,15 @@
     outline: 3px solid #4ade8066 !important; outline-offset: 2px;
   }
   .object-tools a { border-radius: 6px; }
+  .bulk-form-banner {
+    display: flex; align-items: center; justify-content: space-between; gap: 18px;
+    margin: 0 0 20px; padding: 16px 18px; border: 1px solid #16a34a;
+    border-radius: 9px; background: #14532d55;
+  }
+  .bulk-form-banner strong { display: block; margin-bottom: 4px; color: #86efac; }
+  .bulk-form-banner span { color: #cbd5e1; }
+  .bulk-form-actions { display: flex; flex-wrap: wrap; gap: 9px; }
+  .bulk-form-actions .button { display: inline-flex; align-items: center; margin: 0; }
   .row-action {
     display: inline-flex; width: 34px; height: 34px; align-items: center;
     justify-content: center; margin: 2px 5px 2px 0; border-radius: 7px;
@@ -130,6 +139,42 @@
     text-decoration: none;
   }
   .confirmation-actions a.button-secondary:hover { background: #475569 !important; }
+  .excel-action {
+    display: inline-flex !important; align-items: center; gap: 7px;
+  }
+  .excel-action svg { width: 17px; height: 17px; fill: currentColor; }
+  .excel-import-layout {
+    display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+    gap: 20px; align-items: start;
+  }
+  .excel-import-card, .excel-help-card {
+    padding: 26px; border: 1px solid #334155; border-radius: 12px; background: #1e293b;
+  }
+  .excel-import-heading { display: flex; gap: 16px; align-items: center; margin-bottom: 24px; }
+  .excel-import-heading h1 { margin: 0 0 5px; color: #f8fafc; }
+  .excel-import-heading p { margin: 0; color: #94a3b8; }
+  .excel-import-icon {
+    display: grid; flex: 0 0 52px; width: 52px; height: 52px;
+    place-items: center; border-radius: 10px; background: #14532d; color: #86efac;
+  }
+  .excel-import-icon svg { width: 27px; height: 27px; fill: currentColor; }
+  .excel-import-form { display: grid; gap: 20px; }
+  .form-field label { display: block; margin-bottom: 7px; color: #cbd5e1; font-weight: 800; }
+  .form-field select, .form-field input[type="file"] { width: 100%; }
+  .form-field input[type="file"] { padding: 9px; }
+  .form-field .help { margin: 7px 0 0; color: #94a3b8; }
+  .errorlist { color: #fca5a5; }
+  .import-errors {
+    margin-bottom: 20px; padding: 14px 16px; border: 1px solid #b91c1c;
+    border-radius: 8px; background: #450a0a; color: #fecaca;
+  }
+  .import-errors .errorlist { margin-bottom: 0; }
+  .excel-form-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .excel-form-actions .button { display: inline-flex; align-items: center; justify-content: center; }
+  .excel-form-actions .button-secondary { background: #334155 !important; color: #fff !important; }
+  .excel-help-card h2 { margin-top: 0; color: #4ade80; }
+  .excel-help-card ol { padding-left: 22px; color: #cbd5e1; line-height: 1.8; }
+  .excel-help-card p { color: #94a3b8; line-height: 1.5; }
   #nav-sidebar { background: #111827; border-color: #334155; }
   #nav-sidebar .current-model { background: #1e3a2d; }
   #nav-filter { background: #0f172a !important; }
@@ -168,6 +213,13 @@
     .confirmation-card h1 { font-size: 23px; }
     .confirmation-actions { flex-direction: column; }
     .confirmation-actions input, .confirmation-actions a { width: 100%; }
+    .bulk-form-banner, .bulk-form-actions { align-items: stretch; flex-direction: column; }
+    .bulk-form-actions .button { justify-content: center; width: 100%; }
+    .excel-import-layout { grid-template-columns: 1fr; }
+    .excel-import-card, .excel-help-card { padding: 20px 16px; }
+    .excel-import-heading { align-items: flex-start; }
+    .excel-form-actions { flex-direction: column; }
+    .excel-form-actions .button { width: 100%; }
   }
 </style>
 {% endblock %}
