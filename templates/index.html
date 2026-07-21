@@ -200,6 +200,14 @@
 
 <div id="layout">
   <div id="form-panel">
+    <div class="form-panel-heading">
+      <div>
+        <span class="form-panel-eyebrow">Inventory entry</span>
+        <h2>Add inventory details</h2>
+        <p>Drag the panel edge to expand into two columns.</p>
+      </div>
+      <button id="form-width-reset" type="button" title="Restore the default form width">Reset width</button>
+    </div>
     <div id="form-grid"></div>
     <div id="form-actions">
       <button id="add-btn">Add Record</button>
@@ -209,6 +217,11 @@
       <button id="export-btn">Export to Excel</button>
     </div>
     <div id="status"></div>
+  </div>
+
+  <div id="form-resizer" role="separator" aria-label="Resize inventory form panel" aria-orientation="vertical" aria-valuemin="360" aria-valuemax="760" aria-valuenow="420" tabindex="0">
+    <span class="resizer-grip" aria-hidden="true"></span>
+    <span class="resizer-hint" aria-hidden="true">Drag</span>
   </div>
 
   <div id="table-panel">
@@ -357,9 +370,6 @@ function switchTab(key) {
   loadSpecAndRecords();
 }
 
-// ════════════════════════════════════════════
-//  LOAD SPEC + BUILD FORM
-// ════════════════════════════════════════════
 function loadSpecAndRecords() {
   apiRequest('/api/' + currentTabKey + '/spec').then(function (res) {
     if (!res.ok) throw new Error(res.data.error || 'Failed to load configuration.');
@@ -379,8 +389,9 @@ function buildForm() {
   fieldEls = {};
   autoEls = {};
 
-  spec.columns.forEach(function (col) {
+  spec.columns.forEach(function (col, fieldIndex) {
     var wrap = el('div', { class: 'field-wrap' + (spec.wide_cols.includes(col) ? ' wide' : '') });
+    wrap.style.setProperty('--field-delay', Math.min(fieldIndex * 22, 220) + 'ms');
     wrap.appendChild(el('label', { text: col.replace(/_/g, ' ') }));
 
     var isConditional = spec.conditional_dropdowns && spec.conditional_dropdowns[col];
@@ -936,6 +947,117 @@ if (SpeechRecognition) {
 // ════════════════════════════════════════════
 //  INIT
 // ════════════════════════════════════════════
+
+var formPanel = document.getElementById('form-panel');
+var formResizer = document.getElementById('form-resizer');
+var formWidthReset = document.getElementById('form-width-reset');
+var FORM_PANEL_DEFAULT_WIDTH = 420;
+var FORM_PANEL_WIDE_THRESHOLD = 580;
+var formResizeStartX = 0;
+var formResizeStartWidth = FORM_PANEL_DEFAULT_WIDTH;
+var formResizePointerId = null;
+
+function formPanelBounds() {
+  return {
+    min: 360,
+    max: Math.max(360, Math.min(760, window.innerWidth - 360))
+  };
+}
+
+function setFormPanelWidth(width, persist) {
+  if (window.innerWidth <= 900) {
+    formPanel.style.removeProperty('--form-panel-width');
+    formPanel.classList.remove('is-wide');
+    return;
+  }
+  var bounds = formPanelBounds();
+  var nextWidth = Math.round(Math.max(bounds.min, Math.min(bounds.max, width)));
+  formPanel.style.setProperty('--form-panel-width', nextWidth + 'px');
+  formPanel.classList.toggle('is-wide', nextWidth >= FORM_PANEL_WIDE_THRESHOLD);
+  formResizer.setAttribute('aria-valuemax', String(bounds.max));
+  formResizer.setAttribute('aria-valuenow', String(nextWidth));
+  formResizer.setAttribute('aria-valuetext', nextWidth + ' pixels' + (nextWidth >= FORM_PANEL_WIDE_THRESHOLD ? ', two columns' : ', one column'));
+  if (persist) window.localStorage.setItem('inventoryFormPanelWidth', String(nextWidth));
+}
+
+function storedFormPanelWidth() {
+  var savedWidth = Number(window.localStorage.getItem('inventoryFormPanelWidth'));
+  return Number.isFinite(savedWidth) && savedWidth > 0 ? savedWidth : FORM_PANEL_DEFAULT_WIDTH;
+}
+
+function beginFormResize(event) {
+  if (window.innerWidth <= 900) return;
+  event.preventDefault();
+  formResizeStartX = event.clientX;
+  formResizeStartWidth = formPanel.getBoundingClientRect().width;
+  formResizePointerId = event.pointerId === undefined ? null : event.pointerId;
+  if (formResizePointerId !== null && formResizer.setPointerCapture) {
+    try { formResizer.setPointerCapture(formResizePointerId); } catch (error) {}
+  }
+  document.body.classList.add('is-resizing-form');
+  formResizer.classList.add('is-active');
+}
+
+function moveFormResize(event) {
+  if (!document.body.classList.contains('is-resizing-form')) return;
+  if (formResizePointerId !== null && event.pointerId !== formResizePointerId) return;
+  event.preventDefault();
+  setFormPanelWidth(formResizeStartWidth + event.clientX - formResizeStartX, false);
+}
+
+function finishFormResize(event) {
+  if (!document.body.classList.contains('is-resizing-form')) return;
+  if (formResizePointerId !== null && event && event.pointerId !== undefined && event.pointerId !== formResizePointerId) return;
+  if (formResizePointerId !== null && formResizer.releasePointerCapture) {
+    try { formResizer.releasePointerCapture(formResizePointerId); } catch (error) {}
+  }
+  formResizePointerId = null;
+  document.body.classList.remove('is-resizing-form');
+  formResizer.classList.remove('is-active');
+  setFormPanelWidth(formPanel.getBoundingClientRect().width, true);
+}
+
+if (window.PointerEvent) {
+  formResizer.addEventListener('pointerdown', beginFormResize);
+  formResizer.addEventListener('pointermove', moveFormResize);
+  formResizer.addEventListener('pointerup', finishFormResize);
+  formResizer.addEventListener('pointercancel', finishFormResize);
+  formResizer.addEventListener('lostpointercapture', finishFormResize);
+} else {
+  formResizer.addEventListener('mousedown', beginFormResize);
+  document.addEventListener('mousemove', moveFormResize);
+  document.addEventListener('mouseup', finishFormResize);
+}
+
+formResizer.addEventListener('dragstart', function (event) { event.preventDefault(); });
+
+formResizer.addEventListener('keydown', function (event) {
+  if (window.innerWidth <= 900) return;
+  var currentWidth = formPanel.getBoundingClientRect().width;
+  var step = event.shiftKey ? 64 : 24;
+  if (event.key === 'ArrowLeft') setFormPanelWidth(currentWidth - step, true);
+  else if (event.key === 'ArrowRight') setFormPanelWidth(currentWidth + step, true);
+  else if (event.key === 'Home') setFormPanelWidth(FORM_PANEL_DEFAULT_WIDTH, true);
+  else if (event.key === 'End') setFormPanelWidth(formPanelBounds().max, true);
+  else return;
+  event.preventDefault();
+});
+
+formResizer.addEventListener('dblclick', function () {
+  setFormPanelWidth(FORM_PANEL_DEFAULT_WIDTH, true);
+});
+
+formWidthReset.addEventListener('click', function () {
+  setFormPanelWidth(FORM_PANEL_DEFAULT_WIDTH, true);
+  formResizer.focus();
+});
+
+window.addEventListener('resize', function () {
+  setFormPanelWidth(storedFormPanelWidth(), false);
+});
+
+setFormPanelWidth(storedFormPanelWidth(), false);
+
 buildTabBar();
 loadSpecAndRecords();
 </script>
