@@ -45,6 +45,16 @@
   .field-wrap label { font-size: 11px; color: #9ca3af; font-weight: bold; text-transform: uppercase; }
   .field-row { display: flex; gap: 6px; }
   .field-row input, .field-row select { flex: 1; min-width: 0; }
+  .date-field-row { position: relative; }
+  .date-picker-native {
+    position: fixed; width: 1px !important; height: 1px; opacity: 0;
+    pointer-events: none; overflow: hidden;
+  }
+  .date-picker-btn {
+    flex: 0 0 42px; width: 42px; border: 1px solid #4ade80; border-radius: 6px;
+    background: #334155; color: #4ade80; cursor: pointer; font-size: 18px;
+  }
+  .date-picker-btn:hover { background: #4ade80; color: #0f172a; }
   input[type=text], input[type=date], input[type=number], select {
     background: #0f172a; border: 1px solid #475569; border-radius: 6px; color: #fff;
     padding: 8px; font-size: 13px;
@@ -300,6 +310,8 @@ var editingId = null;
 var nextIdPreview = 1;
 var fieldEls = {};
 var autoEls = {};
+var datePickerEls = {};
+var tabDrafts = {};
 
 function el(tag, attrs, children) {
   var e = document.createElement(tag);
@@ -313,13 +325,25 @@ function el(tag, attrs, children) {
 
 function isoToStored(iso) {
   if (!iso) return '';
+  if (/^(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])-\d{4}$/.test(iso)) return iso;
   var parts = iso.split('-');
   return parts.length === 3 ? parts[1] + '-' + parts[2] + '-' + parts[0] : iso;
 }
 function storedToIso(stored) {
   if (!stored) return '';
+  if (/^(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])-\d{4}$/.test(stored)) return stored;
   var parts = stored.split('-');
-  return parts.length === 3 ? parts[2] + '-' + parts[0] + '-' + parts[1] : '';
+  return parts.length === 3 && parts[0].length === 4
+    ? parts[1] + '-' + parts[2] + '-' + parts[0]
+    : stored;
+}
+
+function normalizeCoordinate(value) {
+  var text = String(value || '').trim();
+  if (!text) return '';
+  var number = Number(text);
+  if (!Number.isFinite(number)) return text;
+  return number.toFixed(7).replace(/\.?0+$/, '');
 }
 
 // Ported from _on_latlong_paste: pasting a "lat, long" pair (e.g. copied
@@ -343,8 +367,8 @@ function handleLatLongPaste(latInput, longField) {
     var latVal = parts[0], longVal = parts[1];
     if (isNaN(parseFloat(latVal)) || isNaN(parseFloat(longVal))) return; // not numeric -- leave as-is
 
-    latInput.value = latVal;
-    if (fieldEls[longField]) fieldEls[longField].value = longVal;
+    latInput.value = normalizeCoordinate(latVal);
+    if (fieldEls[longField]) fieldEls[longField].value = normalizeCoordinate(longVal);
     refreshAutoFields();
   }, 0);
 }
@@ -364,6 +388,7 @@ function buildTabBar() {
 }
 
 function switchTab(key) {
+  saveCurrentDraft();
   currentTabKey = key;
   editingId = null;
   buildTabBar();
@@ -388,6 +413,7 @@ function buildForm() {
   grid.innerHTML = '';
   fieldEls = {};
   autoEls = {};
+  datePickerEls = {};
 
   spec.columns.forEach(function (col, fieldIndex) {
     var wrap = el('div', { class: 'field-wrap' + (spec.wide_cols.includes(col) ? ' wide' : '') });
@@ -420,9 +446,37 @@ function buildForm() {
         fieldEls[col] = null;
       }
     } else if (spec.date_fields.includes(col)) {
-      var dateInput = el('input', { type: 'date', id: 'field_' + col });
-      wrap.appendChild(dateInput);
+      var dateRow = el('div', { class: 'field-row date-field-row' });
+      var dateInput = el('input', {
+        type: 'text', id: 'field_' + col, placeholder: 'MM-DD-YYYY',
+        inputmode: 'numeric', maxlength: '10',
+        pattern: '(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])-[0-9]{4}',
+        title: 'Enter the date as MM-DD-YYYY'
+      });
+      var nativePicker = el('input', {
+        type: 'date', class: 'date-picker-native', tabindex: '-1', 'aria-hidden': 'true'
+      });
+      var pickerButton = el('button', {
+        type: 'button', class: 'date-picker-btn', text: '📅',
+        title: 'Choose date', 'aria-label': 'Choose date'
+      });
+      pickerButton.addEventListener('click', function () {
+        if (nativePicker.showPicker) nativePicker.showPicker();
+        else nativePicker.click();
+      });
+      nativePicker.addEventListener('change', function () {
+        dateInput.value = isoToStored(nativePicker.value);
+      });
+      dateInput.addEventListener('input', function () {
+        var match = dateInput.value.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+        nativePicker.value = match ? match[3] + '-' + match[1] + '-' + match[2] : '';
+      });
+      dateRow.appendChild(dateInput);
+      dateRow.appendChild(pickerButton);
+      dateRow.appendChild(nativePicker);
+      wrap.appendChild(dateRow);
       fieldEls[col] = dateInput;
+      datePickerEls[col] = nativePicker;
     } else if (spec.dropdown_fields.includes(col)) {
       var row = el('div', { class: 'field-row' });
       var input = el('input', { type: 'text', id: 'field_' + col, list: 'list_' + col,
@@ -460,13 +514,55 @@ function buildForm() {
           });
         }
       }
+      if (col.endsWith('LATITUDE') || col.endsWith('LONGITUDE')) {
+        textInput.setAttribute('inputmode', 'decimal');
+        textInput.setAttribute('title', 'Maximum 7 digits after the decimal point');
+        textInput.addEventListener('blur', function () {
+          textInput.value = normalizeCoordinate(textInput.value);
+        });
+      }
     }
 
     grid.appendChild(wrap);
   });
 
   applyDefaultFieldValues();
+  restoreCurrentDraft();
   refreshAutoFields();
+}
+
+function saveCurrentDraft() {
+  if (!spec || !currentTabKey) return;
+  var values = {};
+  var hasValue = false;
+  spec.columns.forEach(function (col) {
+    if (!fieldEls[col]) return;
+    values[col] = getVal(col);
+    if (values[col] !== '') hasValue = true;
+  });
+  if (hasValue || editingId !== null) {
+    tabDrafts[currentTabKey] = { values: values, editingId: editingId };
+  } else {
+    delete tabDrafts[currentTabKey];
+  }
+}
+
+function restoreCurrentDraft() {
+  var draft = tabDrafts[currentTabKey];
+  if (!draft) {
+    editingId = null;
+    document.getElementById('update-btn').disabled = true;
+    document.getElementById('delete-btn').disabled = true;
+    return;
+  }
+  Object.keys(draft.values).forEach(function (col) {
+    if (fieldEls[col]) setVal(col, draft.values[col]);
+  });
+  editingId = draft.editingId;
+  var isEditing = editingId !== null;
+  document.getElementById('update-btn').disabled = !isEditing;
+  document.getElementById('delete-btn').disabled = !isEditing;
+  if (isEditing && autoEls['ID']) autoEls['ID'].textContent = String(editingId);
 }
 
 function applyDefaultFieldValues() {
@@ -487,6 +583,10 @@ function getVal(col) {
 function setVal(col, val) {
   var e = fieldEls[col];
   if (e) e.value = val;
+  if (datePickerEls[col]) {
+    var match = String(val || '').match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    datePickerEls[col].value = match ? match[3] + '-' + match[1] + '-' + match[2] : '';
+  }
 }
 
 function onFieldChanged(changedField) {
@@ -628,7 +728,12 @@ function collectRow() {
   spec.columns.forEach(function (col) {
     var isConditionalActive = cond[col] && fieldEls[col] && !fieldEls[col].classList.contains('hidden');
     if (spec.auto_fields.includes(col) && !isConditionalActive) return; // server fills these in
-    row[col] = spec.date_fields.includes(col) ? isoToStored(getVal(col)) : getVal(col);
+    var value = getVal(col);
+    if (col.endsWith('LATITUDE') || col.endsWith('LONGITUDE')) {
+      value = normalizeCoordinate(value);
+      setVal(col, value);
+    }
+    row[col] = spec.date_fields.includes(col) ? isoToStored(value) : value;
   });
   return row;
 }
@@ -644,7 +749,7 @@ document.getElementById('add-btn').addEventListener('click', function () {
       nextIdPreview = res.data.next_id;
       renderTable();
       setStatus('Record ' + res.data.record.ID + ' added.');
-      clearForm(true);
+      clearForm(false);
     }).catch(function (err) { setStatus(err.message); });
 });
 
@@ -659,7 +764,7 @@ document.getElementById('update-btn').addEventListener('click', function () {
       renderTable();
       setStatus('Record ' + res.data.record.ID + ' updated.');
       editingId = null;
-      clearForm(true);
+      clearForm(false);
     }).catch(function (err) { setStatus(err.message); });
 });
 
@@ -697,10 +802,12 @@ function clearForm(keepSticky) {
   if (keepSticky) { for (var f in sticky) setVal(f, sticky[f]); }
 
   editingId = null;
+  delete tabDrafts[currentTabKey];
   refreshAutoFields();
   document.getElementById('update-btn').disabled = true;
   document.getElementById('delete-btn').disabled = true;
   document.querySelectorAll('#table-body tr').forEach(function (tr) { tr.classList.remove('selected'); });
+  if (keepSticky) saveCurrentDraft();
 }
 
 function loadRecord(record) {

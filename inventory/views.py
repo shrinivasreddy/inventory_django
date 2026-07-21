@@ -2,7 +2,8 @@ import io
 import hashlib
 import json
 import threading
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
 from django.contrib.auth import get_user_model, login
@@ -44,6 +45,47 @@ from .specs import (
 locks = {key: threading.Lock() for key in TAB_ORDER}
 
 
+def invalid_date_fields(spec, row):
+    """Return date fields that are not valid MM-DD-YYYY calendar dates."""
+    invalid = []
+    for field in spec["date_fields"]:
+        value = row.get(field, "").strip()
+        if not value:
+            continue
+        try:
+            datetime.strptime(value, "%m-%d-%Y")
+        except ValueError:
+            invalid.append(field)
+    return invalid
+
+
+def normalize_coordinate_fields(spec, row):
+    """Round coordinates to 7 decimals and validate geographic ranges."""
+    errors = []
+    precision = Decimal("0.0000001")
+    for field in spec["columns"]:
+        if not (field.endswith("LATITUDE") or field.endswith("LONGITUDE")):
+            continue
+        value = row.get(field, "").strip()
+        if not value:
+            continue
+        try:
+            coordinate = Decimal(value)
+        except InvalidOperation:
+            errors.append(f"{field} must be a number")
+            continue
+        if not coordinate.is_finite():
+            errors.append(f"{field} must be a finite number")
+            continue
+        limit = Decimal("90") if field.endswith("LATITUDE") else Decimal("180")
+        if coordinate < -limit or coordinate > limit:
+            errors.append(f"{field} must be between {-limit} and {limit}")
+            continue
+        rounded = coordinate.quantize(precision, rounding=ROUND_HALF_UP)
+        row[field] = format(rounded, "f").rstrip("0").rstrip(".") or "0"
+    return errors
+
+
 def api_login_required(view):
     """Return a machine-readable 401 for API clients instead of an HTML
     redirect to the login form."""
@@ -66,6 +108,13 @@ def next_tab_id(key):
     from django.db.models import Max
     max_id = TabRecord.objects.filter(tab=key).aggregate(m=Max("tab_record_id"))["m"]
     return (max_id or 0) + 1
+
+
+def visible_tab_records(request, key):
+    queryset = TabRecord.objects.filter(tab=key).select_related("owner")
+    if not request.user.is_staff:
+        queryset = queryset.filter(owner=request.user)
+    return queryset
 
 
 def renumber_tab_ids(key):
@@ -226,7 +275,7 @@ def api_records(request, key):
 
     if request.method == "GET":
         with locks[key]:
-            qs = TabRecord.objects.filter(tab=key).order_by("tab_record_id")
+            qs = visible_tab_records(request, key).order_by("tab_record_id")
             records = [r.as_row() for r in qs]
             nid = next_tab_id(key)
         return JsonResponse({"records": records, "next_id": nid})
@@ -238,6 +287,15 @@ def api_records(request, key):
             return JsonResponse({"error": "Malformed request: 'row' must be an object."}, status=400)
         row = {c: str(raw_row.get(c, "") or "") for c in spec["columns"]}
         row.pop("ID", None)
+        invalid_dates = invalid_date_fields(spec, row)
+        if invalid_dates:
+            return JsonResponse(
+                {"error": f"{', '.join(invalid_dates)} must use MM-DD-YYYY."},
+                status=400,
+            )
+        coordinate_errors = normalize_coordinate_fields(spec, row)
+        if coordinate_errors:
+            return JsonResponse({"error": "; ".join(coordinate_errors)}, status=400)
 
         with locks[key]:
             ts_dict = get_section_state(key)
@@ -248,19 +306,27 @@ def api_records(request, key):
             try:
                 with transaction.atomic():
                     new_id = next_tab_id(key)
-                    rec = TabRecord.objects.create(tab=key, tab_record_id=new_id, data=row)
+                    rec = TabRecord.objects.create(
+                        tab=key,
+                        tab_record_id=new_id,
+                        data=row,
+                        owner=request.user,
+                    )
             except Exception:
                 return JsonResponse({"error": "Failed to save the record to the database."}, status=500)
-            return JsonResponse({"record": rec.as_row(), "next_id": next_tab_id(key)})
+            return JsonResponse({
+                "record": rec.as_row(),
+                "next_id": next_tab_id(key),
+            })
 
     if request.method == "DELETE":
         with locks[key]:
             try:
                 with transaction.atomic():
-                    TabRecord.objects.filter(tab=key).delete()
+                    visible_tab_records(request, key).delete()
             except Exception:
                 return JsonResponse({"error": "Failed to clear records."}, status=500)
-        return JsonResponse({"ok": True, "next_id": 1})
+        return JsonResponse({"ok": True, "next_id": next_tab_id(key)})
 
     return HttpResponseNotAllowed(["GET", "POST", "DELETE"])
 
@@ -281,10 +347,19 @@ def api_record_detail(request, key, rec_id):
             return JsonResponse({"error": "Malformed request: 'row' must be an object."}, status=400)
         row = {c: str(raw_row.get(c, "") or "") for c in spec["columns"]}
         row.pop("ID", None)
+        invalid_dates = invalid_date_fields(spec, row)
+        if invalid_dates:
+            return JsonResponse(
+                {"error": f"{', '.join(invalid_dates)} must use MM-DD-YYYY."},
+                status=400,
+            )
+        coordinate_errors = normalize_coordinate_fields(spec, row)
+        if coordinate_errors:
+            return JsonResponse({"error": "; ".join(coordinate_errors)}, status=400)
 
         with locks[key]:
             try:
-                rec = TabRecord.objects.get(tab=key, tab_record_id=rec_id)
+                rec = visible_tab_records(request, key).get(tab_record_id=rec_id)
             except TabRecord.DoesNotExist:
                 return JsonResponse({"error": "Record not found"}, status=404)
 
@@ -305,13 +380,12 @@ def api_record_detail(request, key, rec_id):
     if request.method == "DELETE":
         with locks[key]:
             try:
-                rec = TabRecord.objects.get(tab=key, tab_record_id=rec_id)
+                rec = visible_tab_records(request, key).get(tab_record_id=rec_id)
             except TabRecord.DoesNotExist:
                 return JsonResponse({"error": "Record not found"}, status=404)
             try:
                 with transaction.atomic():
                     rec.delete()
-                    renumber_tab_ids(key)
             except Exception:
                 return JsonResponse({"error": "Failed to delete the record."}, status=500)
             return JsonResponse({"ok": True, "next_id": next_tab_id(key)})
@@ -490,7 +564,10 @@ def api_export(request, key):
         return JsonResponse({"error": "Unknown tab"}, status=404)
     spec = get_spec(key)
     with locks[key]:
-        records = [r.as_row() for r in TabRecord.objects.filter(tab=key).order_by("tab_record_id")]
+        records = [
+            r.as_row()
+            for r in visible_tab_records(request, key).order_by("tab_record_id")
+        ]
     if not records:
         return JsonResponse({"error": "There are no records to export yet."}, status=400)
 
@@ -509,7 +586,10 @@ def api_export_all(request):
     snapshots = {}
     for key in TAB_ORDER:
         with locks[key]:
-            snapshots[key] = [r.as_row() for r in TabRecord.objects.filter(tab=key).order_by("tab_record_id")]
+            snapshots[key] = [
+                r.as_row()
+                for r in visible_tab_records(request, key).order_by("tab_record_id")
+            ]
 
     wb = Workbook()
     wb.remove(wb.active)

@@ -1,4 +1,5 @@
 import io
+import json
 import re
 from unittest.mock import patch
 
@@ -38,7 +39,14 @@ class AuthenticationTests(TestCase):
             HTTP_X_CSRFTOKEN=csrf,
         )
         self.assertRedirects(response, reverse("home"))
-        self.assertEqual(self.client.get(reverse("home")).status_code, 200)
+        home_response = self.client.get(reverse("home"))
+        self.assertEqual(home_response.status_code, 200)
+        self.assertContains(home_response, "MM-DD-YYYY")
+        self.assertContains(home_response, "date-picker-btn")
+        self.assertContains(home_response, "Choose date")
+        self.assertContains(home_response, "saveCurrentDraft")
+        self.assertContains(home_response, "restoreCurrentDraft")
+        self.assertNotContains(home_response, "clearForm(true)")
 
     def test_assistant_preview_requires_authentication(self):
         csrf = self.client.get(reverse("login")).cookies["csrftoken"].value
@@ -302,6 +310,172 @@ class DatabaseConfigurationTests(TestCase):
             "ADMIN ADDED VALUE",
             response.json()["options"]["SIGN_CONDITION"],
         )
+
+    def test_regular_users_only_see_and_manage_their_own_inventory(self):
+        other_user = User.objects.create_user(
+            username="otheruser",
+            password="StrongPass!234",
+        )
+        own = TabRecord.objects.create(
+            owner=self.user,
+            tab="sign",
+            tab_record_id=1,
+            data={"ST_ID": "100", "POLE_ID": "P1", "SIGN": "S1"},
+        )
+        other = TabRecord.objects.create(
+            owner=other_user,
+            tab="sign",
+            tab_record_id=2,
+            data={"ST_ID": "200", "POLE_ID": "P2", "SIGN": "S2"},
+        )
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("api_records", args=["sign"]))
+        self.assertEqual([row["ID"] for row in response.json()["records"]], [own.tab_record_id])
+
+        response = self.client.delete(
+            reverse("api_record_detail", args=["sign", other.tab_record_id])
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertTrue(TabRecord.objects.filter(pk=other.pk).exists())
+
+        response = self.client.delete(reverse("api_records", args=["sign"]))
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(TabRecord.objects.filter(pk=own.pk).exists())
+        self.assertTrue(TabRecord.objects.filter(pk=other.pk).exists())
+
+    def test_admin_sees_all_inventory_with_owner_labels(self):
+        other_user = User.objects.create_user(
+            username="fieldworker",
+            first_name="Field",
+            last_name="Worker",
+            password="StrongPass!234",
+        )
+        TabRecord.objects.create(
+            owner=self.user,
+            tab="sign",
+            tab_record_id=1,
+            data={"ST_ID": "100", "POLE_ID": "P1", "SIGN": "S1"},
+        )
+        TabRecord.objects.create(
+            owner=other_user,
+            tab="sign",
+            tab_record_id=2,
+            data={"ST_ID": "200", "POLE_ID": "P2", "SIGN": "S2"},
+        )
+        self.client.force_login(self.admin_user)
+        spec_response = self.client.get(reverse("api_spec", args=["sign"]))
+        self.assertNotIn("ADDED_BY", spec_response.json()["columns"])
+        response = self.client.get(reverse("api_records", args=["sign"]))
+        records = response.json()["records"]
+        self.assertEqual(len(records), 2)
+        self.assertNotIn("ADDED_BY", records[0])
+        self.assertNotIn("ADDED_BY", records[1])
+
+        admin_response = self.client.get(
+            reverse("admin:inventory_tabrecord_changelist")
+        )
+        self.assertContains(admin_response, "Username")
+        self.assertContains(admin_response, "Field Worker")
+        self.assertContains(admin_response, "Date")
+
+        dashboard_response = self.client.get(reverse("admin:index"))
+        self.assertContains(dashboard_response, "Inventory Records")
+        self.assertContains(dashboard_response, "Field Worker")
+        self.assertContains(dashboard_response, ">1</a>", html=False)
+        self.assertContains(dashboard_response, "Section")
+        self.assertContains(dashboard_response, "Date added")
+        self.assertContains(
+            dashboard_response,
+            TabRecord.objects.order_by("pk").first().created_at.strftime("%m-%d-%Y"),
+        )
+
+        self.assertContains(admin_response, "By Username")
+        self.assertContains(admin_response, "By Inventory section")
+        username_response = self.client.get(
+            reverse("admin:inventory_tabrecord_changelist"),
+            {"username": other_user.pk},
+        )
+        self.assertContains(username_response, "Field Worker")
+        self.assertEqual(username_response.context["cl"].result_count, 1)
+        section_response = self.client.get(
+            reverse("admin:inventory_tabrecord_changelist"),
+            {"inventory_section": "sign"},
+        )
+        self.assertEqual(section_response.context["cl"].result_count, 2)
+        section_filter = next(
+            spec
+            for spec in section_response.context["cl"].filter_specs
+            if spec.title == "Inventory section"
+        )
+        sign_choices = [
+            choice for choice in section_filter.lookup_choices if choice[0] == "sign"
+        ]
+        self.assertEqual(len(sign_choices), 1)
+
+    def test_new_inventory_record_is_assigned_to_authenticated_user(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("api_records", args=["sign"]),
+            data=json.dumps({
+                "row": {"ST_ID": "100", "POLE_ID": "P1", "SIGN": "S1"}
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(TabRecord.objects.get().owner, self.user)
+
+    def test_inventory_dates_require_mm_dd_yyyy(self):
+        self.client.force_login(self.user)
+        row = {
+            "ST_ID": "100",
+            "POLE_ID": "P1",
+            "SIGN": "S1",
+            "INSP_DATE": "21-07-2026",
+        }
+        response = self.client.post(
+            reverse("api_records", args=["sign"]),
+            data=json.dumps({"row": row}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("MM-DD-YYYY", response.json()["error"])
+
+        row["INSP_DATE"] = "07-21-2026"
+        response = self.client.post(
+            reverse("api_records", args=["sign"]),
+            data=json.dumps({"row": row}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(TabRecord.objects.get().data["INSP_DATE"], "07-21-2026")
+
+    def test_coordinates_are_rounded_to_seven_decimal_places(self):
+        self.client.force_login(self.user)
+        row = {
+            "ST_ID": "100",
+            "POLE_ID": "P1",
+            "SIGN": "S1",
+            "LATITUDE": "12.34567894",
+            "LONGITUDE": "-98.76543216",
+        }
+        response = self.client.post(
+            reverse("api_records", args=["sign"]),
+            data=json.dumps({"row": row}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        stored = TabRecord.objects.get().data
+        self.assertEqual(stored["LATITUDE"], "12.3456789")
+        self.assertEqual(stored["LONGITUDE"], "-98.7654322")
+
+        row["LATITUDE"] = "91.0000000"
+        response = self.client.post(
+            reverse("api_records", args=["sign"]),
+            data=json.dumps({"row": row}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("between -90 and 90", response.json()["error"])
 
     def test_admin_mutcd_mapping_populates_both_database_dropdowns(self):
         section = InventorySection.objects.get(key="sign")

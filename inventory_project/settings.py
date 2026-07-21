@@ -66,6 +66,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "inventory.context_processors.admin_inventory_records",
             ],
         },
     },
@@ -111,6 +112,13 @@ STORAGES = {
 WHITENOISE_MANIFEST_STRICT = False
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Use one consistent presentation format throughout Django-rendered pages.
+# Database values remain proper date/datetime types.
+DATE_FORMAT = "m-d-Y"
+DATETIME_FORMAT = "m-d-Y"
+SHORT_DATE_FORMAT = "m-d-Y"
+SHORT_DATETIME_FORMAT = "m-d-Y"
 
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "home"

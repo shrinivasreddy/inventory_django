@@ -5,12 +5,14 @@ from zipfile import BadZipFile
 
 from django.contrib import admin
 from django.contrib import messages
+from django.contrib.auth import get_user_model
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Max
 from django.http import HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import path, reverse
+from django.utils import timezone
 from django.utils.html import format_html
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
@@ -400,13 +402,77 @@ class MutcdFallbackAdmin(ConfigurationExcelAdminMixin, RowActionsAdminMixin, adm
     search_fields = ("code", "word_description")
 
 
+class InventoryUsernameFilter(admin.SimpleListFilter):
+    title = "Username"
+    parameter_name = "username"
+
+    def lookups(self, request, model_admin):
+        owner_ids = (
+            TabRecord.objects.exclude(owner_id=None)
+            .order_by()
+            .values_list("owner_id", flat=True)
+            .distinct()
+        )
+        users = get_user_model().objects.filter(pk__in=owner_ids).order_by("username")
+        choices = [
+            (str(user.pk), user.get_full_name().strip() or user.username)
+            for user in users
+        ]
+        if TabRecord.objects.filter(owner_id=None).exists():
+            choices.append(("legacy", "Legacy / unknown"))
+        return choices
+
+    def queryset(self, request, queryset):
+        if self.value() == "legacy":
+            return queryset.filter(owner_id=None)
+        if self.value():
+            return queryset.filter(owner_id=self.value())
+        return queryset
+
+
+class InventorySectionFilter(admin.SimpleListFilter):
+    title = "Inventory section"
+    parameter_name = "inventory_section"
+
+    def lookups(self, request, model_admin):
+        tabs = list(
+            TabRecord.objects.order_by().values_list("tab", flat=True).distinct()
+        )
+        section_names = dict(
+            InventorySection.objects.filter(key__in=tabs).values_list("key", "name")
+        )
+        return [
+            (tab, section_names.get(tab, tab.replace("_", " ").title()))
+            for tab in sorted(tabs, key=str.casefold)
+        ]
+
+    def queryset(self, request, queryset):
+        if self.value():
+            return queryset.filter(tab=self.value())
+        return queryset
+
+
 @admin.register(TabRecord)
 class TabRecordAdmin(admin.ModelAdmin):
-    list_display = ("tab", "tab_record_id", "updated_at")
-    list_filter = ("tab",)
-    search_fields = ("tab_record_id",)
+    list_display = ("record_id", "username", "tab", "date_added")
+    list_filter = (InventoryUsernameFilter, InventorySectionFilter)
+    search_fields = ("tab_record_id", "owner__username", "owner__email")
     ordering = ("tab", "tab_record_id")
     change_list_template = "admin/inventory/tabrecord/change_list.html"
+
+    @admin.display(description="ID", ordering="tab_record_id")
+    def record_id(self, obj):
+        return obj.tab_record_id
+
+    @admin.display(description="Username", ordering="owner__username")
+    def username(self, obj):
+        if not obj.owner:
+            return "Legacy / unknown"
+        return obj.owner.get_full_name().strip() or obj.owner.username
+
+    @admin.display(description="Date", ordering="created_at")
+    def date_added(self, obj):
+        return timezone.localtime(obj.created_at).strftime("%m-%d-%Y")
 
     def get_urls(self):
         urls = super().get_urls()
@@ -543,6 +609,7 @@ class TabRecordAdmin(admin.ModelAdmin):
                                             tab=section_key,
                                             tab_record_id=max_id + offset,
                                             data=row,
+                                            owner=request.user,
                                         )
                                         for offset, row in enumerate(pending_rows, start=1)
                                     ]
@@ -594,12 +661,17 @@ class TabRecordAdmin(admin.ModelAdmin):
         record_count = 0
         for section_key in TAB_ORDER:
             spec = get_spec(section_key)
-            records = list(TabRecord.objects.filter(tab=section_key).order_by("tab_record_id"))
+            records = list(
+                TabRecord.objects.filter(tab=section_key)
+                .select_related("owner")
+                .order_by("tab_record_id")
+            )
             ws = workbook.create_sheet(spec["export_sheet_name"])
-            self._style_sheet(ws, spec["columns"])
+            export_columns = list(spec["columns"]) + ["ADDED_BY"]
+            self._style_sheet(ws, export_columns)
             for record in records:
-                row = record.as_row()
-                ws.append([row.get(column, "") for column in spec["columns"]])
+                row = record.as_row(include_owner=True)
+                ws.append([row.get(column, "") for column in export_columns])
             record_count += len(records)
         buffer = io.BytesIO()
         workbook.save(buffer)

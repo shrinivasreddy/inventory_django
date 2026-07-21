@@ -1,0 +1,33 @@
+{% extends "admin/index.html" %}
+
+{% block content %}
+  <div id="content-main">
+    {% include "admin/app_list.html" with app_list=app_list show_changelinks=True %}
+    <section class="dashboard-records" aria-labelledby="inventory-records-title">
+      <div class="dashboard-records__header">
+        <div>
+          <h2 id="inventory-records-title">Inventory Records</h2>
+          <p>Latest records with the account that added each entry.</p>
+        </div>
+        <a class="button" href="{% url 'admin:inventory_tabrecord_changelist' %}">View all records</a>
+      </div>
+      <div class="dashboard-records__table-wrap">
+        <table>
+          <thead><tr><th>ID</th><th>Username</th><th>Section</th><th>Date added</th></tr></thead>
+          <tbody>
+            {% for record in admin_inventory_records %}
+              <tr>
+                <td><a href="{% url 'admin:inventory_tabrecord_change' record.pk %}">{{ record.tab_record_id }}</a></td>
+                <td>{% if record.owner %}{{ record.owner.get_full_name|default:record.owner.username }}{% else %}Legacy / unknown{% endif %}</td>
+                <td>{{ record.tab }}</td>
+                <td>{{ record.created_at|date:"m-d-Y" }}</td>
+              </tr>
+            {% empty %}
+              <tr><td class="dashboard-records__empty" colspan="4">No inventory records are available.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+{% endblock %}

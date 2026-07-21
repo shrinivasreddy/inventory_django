@@ -178,6 +178,35 @@
   .excel-help-card h2 { margin-top: 0; color: #4ade80; }
   .excel-help-card ol { padding-left: 22px; color: #cbd5e1; line-height: 1.8; }
   .excel-help-card p { color: #94a3b8; line-height: 1.5; }
+  .dashboard #content {
+    display: grid; grid-template-columns: minmax(560px, 900px) 300px;
+    align-items: start; gap: 32px; max-width: 1240px;
+  }
+  .dashboard #content > h1, .dashboard #content > .messagelist { grid-column: 1 / -1; }
+  .dashboard #content-main { float: none; width: auto; min-width: 0; }
+  .dashboard #content-related {
+    float: none; width: auto; margin: 0; position: static;
+  }
+  .dashboard-records {
+    clear: both; margin-top: 28px; max-width: none; overflow: hidden;
+    border: 1px solid #cbd5e1; border-radius: 6px; background: #fff;
+    box-shadow: 0 8px 24px rgb(15 23 42 / 7%);
+  }
+  .dashboard-records__header {
+    display: flex; align-items: center; justify-content: space-between; gap: 18px;
+    padding: 18px 20px; background: #eef4fb; border-bottom: 1px solid #cbd5e1;
+  }
+  .dashboard-records__header h2 { margin: 0 0 5px; color: #0b2f72; font-size: 20px; }
+  .dashboard-records__header p { margin: 0; color: #64748b; }
+  .dashboard-records__table-wrap { overflow-x: auto; }
+  .dashboard-records table { width: 100%; border-collapse: collapse; }
+  .dashboard-records th, .dashboard-records td {
+    padding: 12px 16px; border-bottom: 1px solid #dbe3ee; text-align: left; white-space: nowrap;
+  }
+  .dashboard-records th { background: #0b3b8f; color: #fff; font-size: 12px; text-transform: uppercase; }
+  .dashboard-records tbody tr:last-child td { border-bottom: 0; }
+  .dashboard-records tbody tr:hover { background: #f5f9ff; }
+  .dashboard-records__empty { color: #64748b; text-align: center !important; }
   #nav-sidebar { background: #111827; border-color: #334155; }
   #nav-sidebar .current-model { background: #1e3a2d; }
   #nav-filter { background: #0f172a !important; }
@@ -223,6 +252,11 @@
     .excel-import-heading { align-items: flex-start; }
     .excel-form-actions { flex-direction: column; }
     .excel-form-actions .button { width: 100%; }
+    .dashboard #content { display: block; }
+    .dashboard #content-related { margin-top: 20px; }
+    .dashboard-records { margin-top: 20px; }
+    .dashboard-records__header { align-items: stretch; flex-direction: column; padding: 16px; }
+    .dashboard-records__header .button { text-align: center; }
   }
 </style>
 <link rel="stylesheet" href="{% static 'inventory/css/admin-brand.css' %}">

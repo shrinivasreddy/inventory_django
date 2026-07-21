@@ -122,6 +122,13 @@ class MutcdFallback(models.Model):
 
 
 class TabRecord(models.Model):
+    owner = models.ForeignKey(
+        "auth.User",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="inventory_records",
+    )
     tab = models.CharField(max_length=20, db_index=True)
     tab_record_id = models.PositiveIntegerField()  # the per-tab sequential "ID" shown to users
     data = models.JSONField(default=dict)
@@ -131,10 +138,19 @@ class TabRecord(models.Model):
     class Meta:
         unique_together = [("tab", "tab_record_id")]
         ordering = ["tab_record_id"]
-        indexes = [models.Index(fields=["tab", "tab_record_id"])]
+        indexes = [
+            models.Index(fields=["tab", "tab_record_id"]),
+            models.Index(fields=["owner", "tab"], name="inventory_owner_tab_idx"),
+        ]
 
-    def as_row(self):
-        return {**self.data, "ID": self.tab_record_id}
+    def as_row(self, include_owner=False):
+        row = {**self.data, "ID": self.tab_record_id}
+        if include_owner:
+            if self.owner:
+                row["ADDED_BY"] = self.owner.get_full_name().strip() or self.owner.username
+            else:
+                row["ADDED_BY"] = "Legacy / unknown"
+        return row
 
 
 class TabState(models.Model):
