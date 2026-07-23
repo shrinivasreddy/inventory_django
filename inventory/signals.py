@@ -99,6 +99,29 @@ def send_account_deactivated_email(user_id):
         return False, f"Deactivation email failed: {error}"
 
 
+def send_account_rejected_email(user_id, reason=""):
+    message = smtp_configuration_error()
+    if message:
+        logger.warning("Rejection email not delivered for user ID %s: %s", user_id, message)
+        return False, message
+    try:
+        user = User.objects.get(pk=user_id)
+        if not user.email:
+            return False, "The rejected user has no email address."
+        reason_text = f"\nReason: {reason.strip()}\n" if reason.strip() else "\n"
+        delivered = send_mail(
+            "Bluedome Inventory registration update",
+            f"Hello {user.get_full_name().strip() or user.username},\n\n"
+            "Your Bluedome Inventory registration was not approved."
+            f"{reason_text}\nIf you have questions, please contact your administrator.",
+            settings.DEFAULT_FROM_EMAIL, [user.email], fail_silently=False,
+        )
+        return (True, f"Rejection email sent to {user.email}.") if delivered == 1 else (False, "The email backend did not accept the rejection message.")
+    except Exception as error:
+        logger.exception("Could not send rejection email for user ID %s.", user_id)
+        return False, f"Rejection email failed: {error}"
+
+
 @receiver(pre_save, sender=User)
 def remember_previous_active_state(sender, instance, **kwargs):
     if not instance.pk:

@@ -1,0 +1,13 @@
+{% extends "admin/base_site.html" %}
+{% block breadcrumbs %}<div class="breadcrumbs"><a href="{% url 'admin:index' %}">Home</a> &rsaquo; <a href="{% url 'admin:auth_user_pending_approvals' %}">Pending approvals</a> &rsaquo; Review</div>{% endblock %}
+{% block content %}
+<div class="approval-review">
+  <span class="approval-eyebrow">Registration review</span><h1>{{ approval.user.username }}</h1>
+  <dl><div><dt>Email</dt><dd>{{ approval.user.email }}</dd></div><div><dt>Registered</dt><dd>{{ approval.created_at|date:"m-d-Y" }}</dd></div><div><dt>Status</dt><dd><span class="account-status-pill is-inactive">Pending approval</span></dd></div></dl>
+  <form method="post">{% csrf_token %}
+    <label for="rejection-reason">Rejection reason <span>(optional)</span></label>
+    <textarea id="rejection-reason" name="reason" rows="4" maxlength="2000" placeholder="Explain why this registration cannot be approved. This message will be included in the email."></textarea>
+    <div class="approval-review__actions"><button type="submit" name="action" value="approve" class="approval-approve">Approve user</button><button type="submit" name="action" value="reject" class="approval-reject">Reject user</button><a class="button approval-cancel" href="{% url 'admin:auth_user_pending_approvals' %}">Cancel</a></div>
+  </form>
+</div>
+{% endblock %}

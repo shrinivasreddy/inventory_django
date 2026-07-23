@@ -23,6 +23,8 @@ from .models import (
     MutcdClassification,
     MutcdFallback,
     MutcdMapping,
+    Project,
+    RegistrationApproval,
     TabRecord,
 )
 
@@ -31,8 +33,12 @@ class InventoryImageTests(TestCase):
     def setUp(self):
         self.user = User.objects.create_user("image-owner", password="StrongPass!234")
         self.other = User.objects.create_user("other-user", password="StrongPass!234")
+        self.project = Project.objects.create(name="Image Project", code="image-project")
+        self.project.members.add(self.user)
+        other_project = Project.objects.create(name="Other Project", code="other-project")
+        other_project.members.add(self.other)
         self.record = TabRecord.objects.create(
-            owner=self.user, tab="sign", tab_record_id=1, data={"IMAGE_LINK": ""}
+            project=self.project, owner=self.user, tab="sign", tab_record_id=1, data={"IMAGE_LINK": ""}
         )
 
     @staticmethod
@@ -113,6 +119,8 @@ class AuthenticationTests(TestCase):
             email="existing@example.com",
             password="StrongPass!234",
         )
+        self.project = Project.objects.create(name="Authentication Project", code="auth-project")
+        self.project.members.add(self.user)
 
     def test_anonymous_users_are_redirected_to_login(self):
         response = self.client.get(reverse("home"))
@@ -563,6 +571,8 @@ class DatabaseConfigurationTests(TestCase):
             email="admin@example.com",
             password="StrongPass!234",
         )
+        self.project = Project.objects.create(name="Test Project", code="test-project")
+        self.project.members.add(self.user)
 
     def test_runtime_options_come_from_database(self):
         section = InventorySection.objects.get(key="sign")
@@ -580,18 +590,20 @@ class DatabaseConfigurationTests(TestCase):
             response.json()["options"]["SIGN_CONDITION"],
         )
 
-    def test_regular_users_only_see_and_manage_their_own_inventory(self):
+    def test_regular_users_share_records_only_within_their_project(self):
         other_user = User.objects.create_user(
             username="otheruser",
             password="StrongPass!234",
         )
         own = TabRecord.objects.create(
+            project=self.project,
             owner=self.user,
             tab="sign",
             tab_record_id=1,
             data={"ST_ID": "100", "POLE_ID": "P1", "SIGN": "S1"},
         )
         other = TabRecord.objects.create(
+            project=self.project,
             owner=other_user,
             tab="sign",
             tab_record_id=2,
@@ -599,18 +611,21 @@ class DatabaseConfigurationTests(TestCase):
         )
         self.client.force_login(self.user)
         response = self.client.get(reverse("api_records", args=["sign"]))
-        self.assertEqual([row["ID"] for row in response.json()["records"]], [own.tab_record_id])
+        self.assertEqual(
+            [row["ID"] for row in response.json()["records"]],
+            [own.tab_record_id, other.tab_record_id],
+        )
 
         response = self.client.delete(
             reverse("api_record_detail", args=["sign", other.tab_record_id])
         )
-        self.assertEqual(response.status_code, 404)
-        self.assertTrue(TabRecord.objects.filter(pk=other.pk).exists())
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(TabRecord.objects.filter(pk=other.pk).exists())
 
         response = self.client.delete(reverse("api_records", args=["sign"]))
         self.assertEqual(response.status_code, 200)
         self.assertFalse(TabRecord.objects.filter(pk=own.pk).exists())
-        self.assertTrue(TabRecord.objects.filter(pk=other.pk).exists())
+        self.assertFalse(TabRecord.objects.filter(pk=other.pk).exists())
 
     def test_admin_sees_all_inventory_with_owner_labels(self):
         other_user = User.objects.create_user(
@@ -620,12 +635,14 @@ class DatabaseConfigurationTests(TestCase):
             password="StrongPass!234",
         )
         TabRecord.objects.create(
+            project=self.project,
             owner=self.user,
             tab="sign",
             tab_record_id=1,
             data={"ST_ID": "100", "POLE_ID": "P1", "SIGN": "S1"},
         )
         TabRecord.objects.create(
+            project=self.project,
             owner=other_user,
             tab="sign",
             tab_record_id=2,
@@ -695,12 +712,14 @@ class DatabaseConfigurationTests(TestCase):
 
     def test_admin_can_filter_inventory_by_date_added_range(self):
         older = TabRecord.objects.create(
+            project=self.project,
             owner=self.user,
             tab="sign",
             tab_record_id=1,
             data={"ST_ID": "OLD", "POLE_ID": "P1", "SIGN": "S1"},
         )
         newer = TabRecord.objects.create(
+            project=self.project,
             owner=self.user,
             tab="sign",
             tab_record_id=2,
@@ -1194,6 +1213,7 @@ class DatabaseConfigurationTests(TestCase):
         self.assertEqual(template_book["Sign Inventory"]["A1"].value, "ID")
 
         TabRecord.objects.create(
+            project=self.project,
             tab="sign",
             tab_record_id=1,
             data={"ST_ID": "100", "POLE_ID": "P1", "SIGN": "S1", "SIGN_UID": "SR_100_P1_S1"},
@@ -1211,6 +1231,7 @@ class DatabaseConfigurationTests(TestCase):
     def test_excel_export_neutralizes_formula_cells(self):
         self.client.force_login(self.user)
         TabRecord.objects.create(
+            project=self.project,
             tab="sign",
             tab_record_id=1,
             owner=self.user,
@@ -1285,3 +1306,112 @@ class DatabaseConfigurationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Enter a valid email address")
         self.assertEqual(len(mail.outbox), 0)
+
+
+class ProjectAccessTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("project-user", password="StrongPass!234")
+        self.other = User.objects.create_user("other-project-user", password="StrongPass!234")
+        self.admin = User.objects.create_superuser("project-admin", "admin@example.com", "StrongPass!234")
+        self.alpha = Project.objects.create(name="Alpha", code="alpha")
+        self.beta = Project.objects.create(name="Beta", code="beta")
+        self.alpha.members.add(self.user)
+        self.beta.members.add(self.other)
+        TabRecord.objects.create(
+            project=self.alpha, owner=self.user, tab="sign", tab_record_id=1,
+            data={"ST_ID": "A", "POLE_ID": "P1", "SIGN": "S1"},
+        )
+        TabRecord.objects.create(
+            project=self.beta, owner=self.other, tab="sign", tab_record_id=2,
+            data={"ST_ID": "B", "POLE_ID": "P2", "SIGN": "S2"},
+        )
+
+    def test_user_only_sees_assigned_project_and_cannot_switch_to_another(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("api_records", args=["sign"]))
+        self.assertEqual([row["ST_ID"] for row in response.json()["records"]], ["A"])
+        forbidden = self.client.post(
+            reverse("api_select_project"),
+            data=json.dumps({"project_id": self.beta.pk}),
+            content_type="application/json",
+        )
+        self.assertEqual(forbidden.status_code, 403)
+
+    def test_admin_switches_project_context_without_combining_records(self):
+        self.client.force_login(self.admin)
+        self.client.post(
+            reverse("api_select_project"),
+            data=json.dumps({"project_id": self.beta.pk}),
+            content_type="application/json",
+        )
+        response = self.client.get(reverse("api_records", args=["sign"]))
+        self.assertEqual([row["ST_ID"] for row in response.json()["records"]], ["B"])
+
+    def test_admin_view_all_records_is_grouped_by_project(self):
+        self.client.force_login(self.admin)
+        response = self.client.get(reverse("admin:inventory_tabrecord_changelist"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-project-groups="2"')
+        self.assertContains(response, "Alpha")
+        self.assertContains(response, "Beta")
+        self.assertContains(response, "Sign Inventory: 1", count=2)
+        self.assertEqual(len(response.context["project_groups"]), 2)
+
+        filtered = self.client.get(
+            reverse("admin:inventory_tabrecord_changelist"),
+            {"q": "other-project-user"},
+        )
+        self.assertContains(filtered, 'data-project-groups="1"')
+        self.assertContains(filtered, "Beta")
+        self.assertNotContains(filtered, "Alpha")
+
+    def test_project_admin_loads_individual_member_removal_control(self):
+        self.client.force_login(self.admin)
+        response = self.client.get(reverse("admin:inventory_project_change", args=[self.alpha.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "inventory/js/project-members")
+        self.assertContains(response, 'id="id_members"')
+
+    def test_admin_pending_notification_count_and_approval(self):
+        pending_user = User.objects.create_user("waiting-user", "waiting@example.com", "StrongPass!234", is_active=False)
+        RegistrationApproval.objects.create(user=pending_user)
+        self.client.force_login(self.admin)
+        count = self.client.get(reverse("admin:auth_user_pending_approval_count"))
+        self.assertEqual(count.json()["count"], 1)
+        queue = self.client.get(reverse("admin:auth_user_pending_approvals"))
+        self.assertContains(queue, "waiting-user")
+        with override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+            response = self.client.post(reverse("admin:auth_user_review_registration", args=[pending_user.pk]), {"action": "approve"})
+        self.assertRedirects(response, reverse("admin:auth_user_pending_approvals"))
+        pending_user.refresh_from_db()
+        self.assertTrue(pending_user.is_active)
+        self.assertEqual(pending_user.registration_approval.status, RegistrationApproval.STATUS_APPROVED)
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_admin_rejects_registration_with_email_reason(self):
+        pending_user = User.objects.create_user("rejected-user", "rejected@example.com", "StrongPass!234", is_active=False)
+        RegistrationApproval.objects.create(user=pending_user)
+        self.client.force_login(self.admin)
+        self.client.post(reverse("admin:auth_user_review_registration", args=[pending_user.pk]), {"action": "reject", "reason": "Account could not be verified."})
+        approval = RegistrationApproval.objects.get(user=pending_user)
+        self.assertEqual(approval.status, RegistrationApproval.STATUS_REJECTED)
+        self.assertEqual(approval.rejection_reason, "Account could not be verified.")
+        self.assertIn("Account could not be verified.", mail.outbox[-1].body)
+
+    def test_new_record_is_tagged_with_selected_project(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("api_records", args=["sign"]),
+            data=json.dumps({"row": {"ST_ID": "NEW", "POLE_ID": "P3", "SIGN": "S3"}}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(TabRecord.objects.filter(project=self.alpha, data__ST_ID="NEW").exists())
+
+    def test_user_without_project_sees_contact_admin_page(self):
+        unassigned = User.objects.create_user("unassigned", password="StrongPass!234")
+        self.client.force_login(unassigned)
+        response = self.client.get(reverse("home"))
+        self.assertContains(response, "Contact Admin")
+        api_response = self.client.get(reverse("api_records", args=["sign"]))
+        self.assertEqual(api_response.status_code, 403)

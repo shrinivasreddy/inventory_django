@@ -26,6 +26,9 @@
   #banner h1 { margin: 0; font-size: 20px; color: #4ade80; }
   #banner p { margin: 4px 0 0; font-size: 13px; color: #9ca3af; }
   #banner-actions { display: flex; gap: 10px; align-items: center; }
+  #project-selector { min-width: 180px; border-color: #4ade80; color: #4ade80; font-weight: 700; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   #current-user { color: #cbd5e1; font-size: 12px; }
   #export-all-btn { background: #7c3aed; color: #fff; border: none; border-radius: 6px;
     padding: 10px 16px; font-size: 12px; font-weight: bold; cursor: pointer; }
@@ -217,7 +220,22 @@
     </div>
   </div>
   <div id="banner-actions">
-    <span id="current-user">Signed in as {{ request.user.username }}</span>
+    <div class="account-context" title="Signed in account">
+      <span class="account-context__avatar" aria-hidden="true">{{ request.user.username|slice:":1"|upper }}</span>
+      <span><small>Signed in as</small><strong id="current-user">{{ request.user.username }}</strong></span>
+    </div>
+    <div class="project-switcher" id="project-switcher">
+      <span class="project-switcher__icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path d="M4 4h7v7H4V4zm9 0h7v7h-7V4zM4 13h7v7H4v-7zm9 0h7v7h-7v-7z"/></svg>
+      </span>
+      <label for="project-selector"><small>Current project</small><span class="sr-only">Choose current project</span></label>
+      <select id="project-selector" aria-label="Current project">
+        {% for project in projects %}
+          <option value="{{ project.pk }}"{% if project.pk == selected_project.pk %} selected{% endif %}>{{ project.name }}</option>
+        {% endfor %}
+      </select>
+      <span class="project-switcher__chevron" aria-hidden="true"></span>
+    </div>
     {% if request.user.is_staff %}
       <a id="admin-link" href="{% url 'admin:index' %}">Admin Configuration</a>
     {% endif %}
@@ -338,6 +356,22 @@ function apiRequest(url, options) {
 
 var TABS = {{ tabs_json|safe }};
 var currentTabKey = TABS[0].key;
+var projectSelector = document.getElementById('project-selector');
+
+projectSelector.addEventListener('change', function () {
+  projectSelector.disabled = true;
+  document.getElementById('project-switcher').classList.add('is-switching');
+  apiRequest('/api/projects/select', {
+    method: 'POST',
+    body: JSON.stringify({project_id: projectSelector.value})
+  }).then(function () {
+    window.location.reload();
+  }).catch(function (error) {
+    projectSelector.disabled = false;
+    document.getElementById('project-switcher').classList.remove('is-switching');
+    alert(error.message || 'Unable to switch project.');
+  });
+});
 
 var spec = null;
 var allRecords = [];

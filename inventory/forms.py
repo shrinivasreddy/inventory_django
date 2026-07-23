@@ -6,7 +6,7 @@ from django.core.validators import RegexValidator
 from django.conf import settings
 from zipfile import BadZipFile, LargeZipFile, ZipFile
 
-from .models import InventorySection
+from .models import InventorySection, RegistrationApproval
 
 
 strict_email_validator = RegexValidator(
@@ -67,6 +67,7 @@ class SignUpForm(UserCreationForm):
         user.is_active = False
         if commit:
             user.save()
+            RegistrationApproval.objects.get_or_create(user=user)
         return user
 
 

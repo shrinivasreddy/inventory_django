@@ -1,0 +1,23 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Project access required | Blue Dome Inventory</title>
+  <link rel="stylesheet" href="{% static 'inventory/css/auth.css' %}">
+</head>
+<body class="auth-status-page">
+  <main class="card auth-status-card">
+    {% include "registration/_brand.html" %}
+    <div class="status-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 11h-2V7h2zm0 4h-2v-2h2z"/></svg>
+    </div>
+    <h1>Project access required</h1>
+    <p class="subtitle">No inventory project is assigned to your account.</p>
+    <div class="status-message"><p>Contact Admin to request access to a project.</p></div>
+    {% if request.user.is_staff %}<a class="auth-primary-link" href="{% url 'admin:inventory_project_changelist' %}">Manage projects</a>{% endif %}
+    <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button class="auth-primary-link" type="submit">Log out</button></form>
+  </main>
+</body>
+</html>

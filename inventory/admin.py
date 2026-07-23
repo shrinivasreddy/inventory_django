@@ -10,7 +10,7 @@ from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Max
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import path, reverse
 from django.utils import timezone
@@ -30,15 +30,109 @@ from .models import (
     MutcdClassification,
     MutcdFallback,
     MutcdMapping,
+    Project,
+    RegistrationApproval,
     TabRecord,
 )
 from .specs import TAB_ORDER, compute_auto_fields, get_section_state, get_spec, missing_required_fields
-from .signals import send_account_approved_email, send_account_deactivated_email
+from .signals import send_account_approved_email, send_account_deactivated_email, send_account_rejected_email
 
 admin.site.site_header = "Bluedome Inventory"
 admin.site.site_title = "Bluedome Inventory"
 admin.site.index_title = "Inventory Configuration"
 admin.site.site_url = "/"
+
+
+@admin.register(Project)
+class ProjectAdmin(admin.ModelAdmin):
+    list_display = (
+        "project_name",
+        "code_badge",
+        "status_badge",
+        "member_count",
+        "created_on",
+        "project_actions",
+    )
+    list_display_links = ("project_name",)
+    list_filter = ("is_active",)
+    search_fields = ("name", "code", "members__username", "members__email")
+    filter_horizontal = ("members",)
+    prepopulated_fields = {"code": ("name",)}
+    fieldsets = (
+        (
+            "Project details",
+            {
+                "fields": ("name", "code", "is_active"),
+                "description": (
+                    "Create a clear project identity. The project code is generated "
+                    "from the name and can be adjusted before saving."
+                ),
+            },
+        ),
+        (
+            "Project access",
+            {
+                "fields": ("members",),
+                "description": (
+                    "Choose the users who may view and manage this project's inventory. "
+                    "Use the search boxes to quickly find an account."
+                ),
+            },
+        ),
+    )
+
+    class Media:
+        js = ("inventory/js/project-members.js",)
+
+    @admin.display(description="Assigned users")
+    def member_count(self, obj):
+        count = obj.members.count()
+        return format_html(
+            '<span class="project-member-count"><span aria-hidden="true">&#128101;</span> {} {}</span>',
+            count,
+            "user" if count == 1 else "users",
+        )
+
+    @admin.display(description="Project", ordering="name")
+    def project_name(self, obj):
+        return format_html(
+            '<span class="project-name-cell"><span class="project-avatar" aria-hidden="true">{}</span>'
+            '<span><strong>{}</strong><small>Inventory workspace</small></span></span>',
+            obj.name[:1].upper(),
+            obj.name,
+        )
+
+    @admin.display(description="Code", ordering="code")
+    def code_badge(self, obj):
+        return format_html('<span class="project-code-badge">{}</span>', obj.code)
+
+    @admin.display(description="Status", ordering="is_active")
+    def status_badge(self, obj):
+        label = "Active" if obj.is_active else "Inactive"
+        state = "active" if obj.is_active else "inactive"
+        return format_html(
+            '<span class="project-status project-status--{}"><span aria-hidden="true"></span>{}</span>',
+            state,
+            label,
+        )
+
+    @admin.display(description="Created", ordering="created_at")
+    def created_on(self, obj):
+        return timezone.localtime(obj.created_at).strftime("%m-%d-%Y")
+
+    @admin.display(description="Actions")
+    def project_actions(self, obj):
+        change_url = reverse("admin:inventory_project_change", args=[obj.pk])
+        delete_url = reverse("admin:inventory_project_delete", args=[obj.pk])
+        return format_html(
+            '<span class="project-row-actions">'
+            '<a href="{}" class="project-icon-action project-icon-action--edit" title="Edit project" aria-label="Edit {}">'
+            '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1.003 1.003 0 0 0 0-1.42l-2.34-2.34a1.003 1.003 0 0 0-1.42 0l-1.83 1.83 3.75 3.75 1.84-1.82z"/></svg></a>'
+            '<a href="{}" class="project-icon-action project-icon-action--delete" title="Delete project" aria-label="Delete {}">'
+            '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zm3.46-7.12 1.41-1.41L12 11.59l1.12-1.12 1.41 1.41L13.41 13l1.12 1.12-1.41 1.41L12 14.41l-1.12 1.12-1.41-1.41L10.59 13l-1.13-1.12zM15.5 4l-1-1h-5l-1 1H5v2h14V4z"/></svg></a>'
+            '</span>',
+            change_url, obj.name, delete_url, obj.name,
+        )
 
 
 User = get_user_model()
@@ -90,6 +184,9 @@ class BluedomeUserAdmin(DjangoUserAdmin):
     def get_urls(self):
         urls = super().get_urls()
         custom_urls = [
+            path("pending-approvals/", self.admin_site.admin_view(self.pending_approvals), name="auth_user_pending_approvals"),
+            path("pending-approvals/count/", self.admin_site.admin_view(self.pending_approval_count), name="auth_user_pending_approval_count"),
+            path("<int:user_id>/review-registration/", self.admin_site.admin_view(self.review_registration), name="auth_user_review_registration"),
             path(
                 "<int:user_id>/activate-account/",
                 self.admin_site.admin_view(self.change_account_status),
@@ -105,6 +202,50 @@ class BluedomeUserAdmin(DjangoUserAdmin):
         ]
         return custom_urls + urls
 
+    def pending_approval_count(self, request):
+        return JsonResponse({"count": RegistrationApproval.objects.filter(status=RegistrationApproval.STATUS_PENDING).count()})
+
+    def pending_approvals(self, request):
+        pending = RegistrationApproval.objects.filter(status=RegistrationApproval.STATUS_PENDING).select_related("user")
+        return render(request, "admin/auth/user/pending_approvals.html", {
+            **self.admin_site.each_context(request), "title": "Pending user approvals", "pending_approvals": pending, "opts": self.model._meta,
+        })
+
+    def review_registration(self, request, user_id):
+        approval = get_object_or_404(RegistrationApproval.objects.select_related("user"), user_id=user_id, status=RegistrationApproval.STATUS_PENDING)
+        if request.method == "POST":
+            action = request.POST.get("action")
+            if action == "approve":
+                approval.user._skip_approval_email = True
+                approval.user.is_active = True
+                approval.user.save(update_fields=["is_active"])
+                approval.status = RegistrationApproval.STATUS_APPROVED
+                approval.rejection_reason = ""
+                approval.reviewed_by = request.user
+                approval.reviewed_at = timezone.now()
+                approval.save(update_fields=["status", "rejection_reason", "reviewed_by", "reviewed_at"])
+                delivered, detail = send_account_approved_email(approval.user_id)
+                messages.success(request, f'User "{approval.user.username}" was approved.')
+            elif action == "reject":
+                reason = request.POST.get("reason", "").strip()
+                approval.user.is_active = False
+                approval.user.save(update_fields=["is_active"])
+                approval.status = RegistrationApproval.STATUS_REJECTED
+                approval.rejection_reason = reason
+                approval.reviewed_by = request.user
+                approval.reviewed_at = timezone.now()
+                approval.save(update_fields=["status", "rejection_reason", "reviewed_by", "reviewed_at"])
+                delivered, detail = send_account_rejected_email(approval.user_id, reason)
+                messages.success(request, f'User "{approval.user.username}" was rejected.')
+            else:
+                messages.error(request, "Choose Approve or Reject.")
+                return redirect("admin:auth_user_review_registration", user_id=user_id)
+            messages.success(request, detail) if delivered else messages.warning(request, detail)
+            return redirect("admin:auth_user_pending_approvals")
+        return render(request, "admin/auth/user/review_registration.html", {
+            **self.admin_site.each_context(request), "title": "Review registration", "approval": approval, "opts": self.model._meta,
+        })
+
     def change_account_status(self, request, user_id, activate):
         if not self.has_change_permission(request):
             raise PermissionDenied
@@ -117,6 +258,8 @@ class BluedomeUserAdmin(DjangoUserAdmin):
             user._skip_deactivation_email = not activate
             user.is_active = activate
             user.save(update_fields=["is_active"])
+            if activate:
+                RegistrationApproval.objects.filter(user=user, status=RegistrationApproval.STATUS_PENDING).update(status=RegistrationApproval.STATUS_APPROVED, reviewed_by=request.user, reviewed_at=timezone.now())
             action = "activated" if activate else "deactivated"
             messages.success(request, f'User "{user.username}" was {action}.')
             delivery_function = (
@@ -149,6 +292,13 @@ class BluedomeUserAdmin(DjangoUserAdmin):
             user._skip_approval_email = True
             user.is_active = True
             user.save(update_fields=["is_active"])
+            RegistrationApproval.objects.filter(
+                user=user, status=RegistrationApproval.STATUS_PENDING
+            ).update(
+                status=RegistrationApproval.STATUS_APPROVED,
+                reviewed_by=request.user,
+                reviewed_at=timezone.now(),
+            )
             approved += 1
             was_delivered, delivery_message = send_account_approved_email(user.pk)
             if was_delivered:
@@ -714,6 +864,55 @@ class TabRecordAdmin(admin.ModelAdmin):
     ordering = ("tab", "tab_record_id")
     change_list_template = "admin/inventory/tabrecord/change_list.html"
 
+    @staticmethod
+    def _selected_project(request):
+        project_id = request.session.get("inventory_project_id")
+        project = Project.objects.filter(pk=project_id, is_active=True).first()
+        if project is None:
+            project = Project.objects.filter(is_active=True).first()
+            if project:
+                request.session["inventory_project_id"] = project.pk
+        return project
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related("project", "owner")
+
+    def changelist_view(self, request, extra_context=None):
+        """Render the filtered/paginated admin results grouped by project."""
+        try:
+            changelist = self.get_changelist_instance(request)
+            records = list(changelist.result_list)
+        except Exception:
+            # Let Django render its normal validation/error response for an
+            # invalid query-string filter rather than masking the exception.
+            return super().changelist_view(request, extra_context=extra_context)
+
+        grouped = {}
+        for record in records:
+            group = grouped.setdefault(
+                record.project_id,
+                {
+                    "project": record.project,
+                    "records": [],
+                    "section_counts": {},
+                },
+            )
+            group["records"].append(record)
+            label = get_spec(record.tab)["tab_label"]
+            group["section_counts"][label] = group["section_counts"].get(label, 0) + 1
+
+        project_groups = sorted(grouped.values(), key=lambda group: group["project"].name.casefold())
+        for index, group in enumerate(project_groups):
+            group["section_counts"] = sorted(group["section_counts"].items())
+            group["expanded"] = len(project_groups) <= 3 or index == 0
+
+        context = {
+            "project_groups": project_groups,
+            "grouped_record_count": len(records),
+            **(extra_context or {}),
+        }
+        return super().changelist_view(request, extra_context=context)
+
     @admin.display(description="ID", ordering="tab_record_id")
     def record_id(self, obj):
         return obj.tab_record_id
@@ -775,6 +974,10 @@ class TabRecordAdmin(admin.ModelAdmin):
     def import_excel(self, request):
         if not self.has_add_permission(request):
             raise PermissionDenied
+        project = self._selected_project(request)
+        if project is None:
+            messages.warning(request, "Select an active project from the main inventory page first.")
+            return redirect("home")
 
         if request.method == "POST":
             form = InventoryExcelImportForm(request.POST, request.FILES)
@@ -862,6 +1065,7 @@ class TabRecordAdmin(admin.ModelAdmin):
                                     TabRecord.objects.bulk_create(
                                         [
                                             TabRecord(
+                                                project=project,
                                                 tab=section_key,
                                                 tab_record_id=max_id + offset,
                                                 data=row,
@@ -912,13 +1116,17 @@ class TabRecordAdmin(admin.ModelAdmin):
         return response
 
     def export_excel(self, request):
+        project = self._selected_project(request)
+        if project is None:
+            messages.warning(request, "Select an active project from the main inventory page first.")
+            return redirect("home")
         workbook = Workbook()
         workbook.remove(workbook.active)
         record_count = 0
         for section_key in TAB_ORDER:
             spec = get_spec(section_key)
             records = list(
-                TabRecord.objects.filter(tab=section_key)
+                TabRecord.objects.filter(tab=section_key, project=project)
                 .select_related("owner")
                 .order_by("tab_record_id")
             )
@@ -936,7 +1144,7 @@ class TabRecordAdmin(admin.ModelAdmin):
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
         response["Content-Disposition"] = (
-            f'attachment; filename="Bluedome_All_Inventory_Records_{date.today().isoformat()}.xlsx"'
+            f'attachment; filename="Bluedome_{project.code}_Inventory_Records_{date.today().isoformat()}.xlsx"'
         )
         response["X-Record-Count"] = str(record_count)
         return response

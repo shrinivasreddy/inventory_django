@@ -21,3 +21,52 @@
   </li>
   {{ block.super }}
 {% endblock %}
+
+{% block result_list %}
+  <div class="project-record-groups" data-project-groups="{{ project_groups|length }}">
+    {% for group in project_groups %}
+      <details class="project-record-group"{% if group.expanded %} open{% endif %}>
+        <summary>
+          <span class="project-record-group__identity">
+            <span class="project-record-group__avatar" aria-hidden="true">{{ group.project.name|slice:":1"|upper }}</span>
+            <span>
+              <strong>{{ group.project.name }}</strong>
+              <small>{{ group.project.code }}</small>
+            </span>
+          </span>
+          <span class="project-record-group__meta">
+            {% for section, count in group.section_counts %}<span>{{ section }}: {{ count }}</span>{% endfor %}
+            <b>{{ group.records|length }} record{{ group.records|length|pluralize }}</b>
+          </span>
+        </summary>
+        <div class="project-record-group__table-wrap">
+          <table>
+            <thead><tr><th class="project-record-select"><span class="sr-only">Select</span></th><th>ID</th><th>Inventory section</th><th>Username</th><th>Date added</th><th>Actions</th></tr></thead>
+            <tbody>
+              {% for record in group.records %}
+                <tr>
+                  <td class="project-record-select"><input type="checkbox" name="_selected_action" value="{{ record.pk }}" class="action-select" aria-label="Select record {{ record.tab_record_id }}"></td>
+                  <td><a class="project-record-id" href="{% url 'admin:inventory_tabrecord_change' record.pk %}">{{ record.tab_record_id }}</a></td>
+                  <td><span class="project-record-section project-record-section--{{ record.tab }}">{{ record.tab|title }} Inventory</span></td>
+                  <td>{% if record.owner %}{{ record.owner.get_full_name|default:record.owner.username }}{% else %}Legacy / unknown{% endif %}</td>
+                  <td>{{ record.created_at|date:"m-d-Y" }}</td>
+                  <td>
+                    <span class="project-row-actions">
+                      <a class="project-icon-action project-icon-action--edit" href="{% url 'admin:inventory_tabrecord_change' record.pk %}" title="Edit record" aria-label="Edit record {{ record.tab_record_id }}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1.003 1.003 0 0 0 0-1.42l-2.34-2.34a1.003 1.003 0 0 0-1.42 0l-1.83 1.83 3.75 3.75 1.84-1.82z"/></svg></a>
+                      <a class="project-icon-action project-icon-action--delete" href="{% url 'admin:inventory_tabrecord_delete' record.pk %}" title="Delete record" aria-label="Delete record {{ record.tab_record_id }}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zm3.46-7.12 1.41-1.41L12 11.59l1.12-1.12 1.41 1.41L13.41 13l1.12 1.12-1.41 1.41L12 14.41l-1.12 1.12-1.41-1.41L10.59 13l-1.13-1.12zM15.5 4l-1-1h-5l-1 1H5v2h14V4z"/></svg></a>
+                    </span>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    {% empty %}
+      <div class="project-records-empty">
+        <strong>No inventory records found</strong>
+        <p>Try clearing the current search or filter criteria.</p>
+      </div>
+    {% endfor %}
+  </div>
+{% endblock %}

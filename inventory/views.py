@@ -25,6 +25,7 @@ from .models import (
     DropdownOption,
     MutcdClassification,
     MutcdMapping,
+    Project,
     TabRecord,
 )
 from .forms import SignUpForm
@@ -112,11 +113,36 @@ def next_tab_id(key):
     return (max_id or 0) + 1
 
 
+def accessible_projects(request):
+    projects = Project.objects.filter(is_active=True)
+    return projects if request.user.is_staff else projects.filter(members=request.user)
+
+
+def selected_project(request):
+    projects = accessible_projects(request)
+    project_id = request.session.get("inventory_project_id")
+    project = projects.filter(pk=project_id).first() if project_id else None
+    if project is None:
+        project = projects.first()
+        if project:
+            request.session["inventory_project_id"] = project.pk
+        else:
+            request.session.pop("inventory_project_id", None)
+    return project
+
+
+def require_selected_project(request):
+    project = selected_project(request)
+    if project is None:
+        return None, JsonResponse({"error": "No project is assigned. Contact Admin."}, status=403)
+    return project, None
+
+
 def visible_tab_records(request, key):
-    queryset = TabRecord.objects.filter(tab=key).select_related("owner")
-    if not request.user.is_staff:
-        queryset = queryset.filter(owner=request.user)
-    return queryset
+    project = selected_project(request)
+    if project is None:
+        return TabRecord.objects.none()
+    return TabRecord.objects.filter(tab=key, project=project).select_related("owner", "project")
 
 
 def renumber_tab_ids(key):
@@ -176,7 +202,29 @@ def password_requirements(request):
 @require_GET
 def home(request):
     tabs = [{"key": k, "label": get_spec(k)["tab_label"]} for k in TAB_ORDER]
-    return render(request, "index.html", {"tabs_json": json.dumps(tabs)})
+    projects = list(accessible_projects(request))
+    if not projects:
+        return render(request, "no_projects.html")
+    return render(request, "index.html", {
+        "tabs_json": json.dumps(tabs),
+        "projects": projects,
+        "selected_project": selected_project(request),
+    })
+
+
+@api_login_required
+@require_POST
+def api_select_project(request):
+    data = parse_json_body(request)
+    try:
+        project_id = int(data.get("project_id"))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "Choose a valid project."}, status=400)
+    project = accessible_projects(request).filter(pk=project_id).first()
+    if project is None:
+        return JsonResponse({"error": "You do not have access to this project."}, status=403)
+    request.session["inventory_project_id"] = project.pk
+    return JsonResponse({"ok": True})
 
 
 @api_login_required
@@ -287,6 +335,9 @@ def api_records(request, key):
     if key not in TAB_ORDER:
         return JsonResponse({"error": "Unknown tab"}, status=404)
     spec = get_spec(key)
+    project, project_error = require_selected_project(request)
+    if project_error:
+        return project_error
 
     if request.method == "GET":
         with locks[key]:
@@ -323,6 +374,7 @@ def api_records(request, key):
                 with transaction.atomic():
                     new_id = next_tab_id(key)
                     rec = TabRecord.objects.create(
+                        project=project,
                         tab=key,
                         tab_record_id=new_id,
                         data=row,

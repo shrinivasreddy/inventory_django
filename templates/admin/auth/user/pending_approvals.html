@@ -1,0 +1,16 @@
+{% extends "admin/base_site.html" %}
+{% block breadcrumbs %}<div class="breadcrumbs"><a href="{% url 'admin:index' %}">Home</a> &rsaquo; Pending approvals</div>{% endblock %}
+{% block content %}
+<div class="approval-queue">
+  <header><div><span class="approval-eyebrow">Account access</span><h1>Pending user approvals</h1><p>Review new registrations before they can access inventory projects.</p></div><span class="approval-total">{{ pending_approvals|length }} pending</span></header>
+  <div class="approval-list">
+  {% for approval in pending_approvals %}
+    <article class="approval-card">
+      <span class="approval-avatar" aria-hidden="true">{{ approval.user.username|slice:":1"|upper }}</span>
+      <div><h2>{{ approval.user.username }}</h2><p>{{ approval.user.email }}</p><small>Registered {{ approval.created_at|date:"m-d-Y" }}</small></div>
+      <a class="button" href="{% url 'admin:auth_user_review_registration' approval.user_id %}">Review</a>
+    </article>
+  {% empty %}<div class="approval-empty"><strong>All caught up</strong><p>There are no registrations waiting for approval.</p></div>{% endfor %}
+  </div>
+</div>
+{% endblock %}

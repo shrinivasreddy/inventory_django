@@ -15,6 +15,41 @@ Flask version's flat JSON files. Two models cover everything:
 
 from django.db import models
 
+# Project-scoped inventory access.
+
+
+class Project(models.Model):
+    name = models.CharField(max_length=150, unique=True)
+    code = models.SlugField(max_length=50, unique=True)
+    members = models.ManyToManyField("auth.User", blank=True, related_name="inventory_projects")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+
+class RegistrationApproval(models.Model):
+    STATUS_PENDING = "pending"
+    STATUS_APPROVED = "approved"
+    STATUS_REJECTED = "rejected"
+    STATUS_CHOICES = ((STATUS_PENDING, "Pending"), (STATUS_APPROVED, "Approved"), (STATUS_REJECTED, "Rejected"))
+    user = models.OneToOneField("auth.User", on_delete=models.CASCADE, related_name="registration_approval")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING, db_index=True)
+    rejection_reason = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey("auth.User", null=True, blank=True, on_delete=models.SET_NULL, related_name="reviewed_registrations")
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"{self.user.username}: {self.status}"
+
 
 class InventorySection(models.Model):
     key = models.CharField(max_length=20, primary_key=True)
@@ -122,6 +157,9 @@ class MutcdFallback(models.Model):
 
 
 class TabRecord(models.Model):
+    project = models.ForeignKey(
+        Project, on_delete=models.PROTECT, related_name="inventory_records"
+    )
     owner = models.ForeignKey(
         "auth.User",
         null=True,
@@ -141,6 +179,7 @@ class TabRecord(models.Model):
         indexes = [
             models.Index(fields=["tab", "tab_record_id"]),
             models.Index(fields=["owner", "tab"], name="inventory_owner_tab_idx"),
+            models.Index(fields=["project", "tab"], name="inventory_project_tab_idx"),
         ]
 
     def as_row(self, include_owner=False):
