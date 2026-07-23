@@ -1,0 +1,58 @@
+<details data-filter-title="{{ title }}" open>
+  <summary>{{ title }}</summary>
+  <form method="get" class="inventory-date-filter">
+    {% for key, value in spec.other_parameters %}
+      <input type="hidden" name="{{ key }}" value="{{ value }}">
+    {% endfor %}
+    <label for="inventory-date-from">From</label>
+    <div class="inventory-date-input">
+      <input id="inventory-date-from" name="date_from" type="text"
+             inputmode="numeric" placeholder="MM-DD-YYYY"
+             pattern="\d{2}-\d{2}-\d{4}" value="{{ spec.date_from }}">
+      <button type="button" class="inventory-calendar-button" aria-label="Choose From date" title="Choose date">&#128197;</button>
+      <input class="inventory-native-date" type="date" aria-label="From date calendar" tabindex="-1">
+    </div>
+    <label for="inventory-date-to">To</label>
+    <div class="inventory-date-input">
+      <input id="inventory-date-to" name="date_to" type="text"
+             inputmode="numeric" placeholder="MM-DD-YYYY"
+             pattern="\d{2}-\d{2}-\d{4}" value="{{ spec.date_to }}">
+      <button type="button" class="inventory-calendar-button" aria-label="Choose To date" title="Choose date">&#128197;</button>
+      <input class="inventory-native-date" type="date" aria-label="To date calendar" tabindex="-1">
+    </div>
+    <div class="inventory-date-filter-actions">
+      <button type="submit">Apply</button>
+      <a href="?{% for key, value in spec.other_parameters %}{{ key|urlencode }}={{ value|urlencode }}{% if not forloop.last %}&amp;{% endif %}{% endfor %}">Clear</a>
+    </div>
+  </form>
+</details>
+<script>
+  document.querySelectorAll('.inventory-date-input').forEach(function (wrapper) {
+    const textInput = wrapper.querySelector('input[type="text"]');
+    const dateInput = wrapper.querySelector('input[type="date"]');
+    const calendarButton = wrapper.querySelector('.inventory-calendar-button');
+
+    function textToIso(value) {
+      const match = /^(\d{2})-(\d{2})-(\d{4})$/.exec(value || '');
+      return match ? match[3] + '-' + match[1] + '-' + match[2] : '';
+    }
+
+    function isoToText(value) {
+      const parts = (value || '').split('-');
+      return parts.length === 3 ? parts[1] + '-' + parts[2] + '-' + parts[0] : '';
+    }
+
+    dateInput.value = textToIso(textInput.value);
+    textInput.addEventListener('change', function () {
+      dateInput.value = textToIso(textInput.value);
+    });
+    dateInput.addEventListener('change', function () {
+      textInput.value = isoToText(dateInput.value);
+    });
+    calendarButton.addEventListener('click', function () {
+      dateInput.value = textToIso(textInput.value);
+      if (typeof dateInput.showPicker === 'function') dateInput.showPicker();
+      else dateInput.click();
+    });
+  });
+</script>

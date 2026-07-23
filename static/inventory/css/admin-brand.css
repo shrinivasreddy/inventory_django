@@ -28,6 +28,20 @@ input[type="submit"]:hover, button:hover, .button:hover, a.button:hover, .object
 #content h1, .confirmation-card h1, .excel-import-heading h1 { color:#002a7d; }
 #content-main .module tr, #content-main .module td, #content-main .module th { border-color:#dce5f2; }
 #toolbar, #changelist .actions, #changelist .paginator { border-color:#dce5f2; background:#fff; }
+.inventory-date-filter { display:grid; gap:7px; padding:10px 15px 14px; }
+.inventory-date-filter label { color:#526079; font-size:12px; font-weight:700; text-transform:uppercase; }
+.inventory-date-filter input { box-sizing:border-box; width:100%; }
+.inventory-date-input { display:grid; grid-template-columns:minmax(0, 1fr) 38px; position:relative; }
+.inventory-date-input > input[type="text"] { border-radius:4px 0 0 4px; }
+.inventory-calendar-button { align-items:center; border-radius:0!important; display:flex; justify-content:center; min-width:38px; padding:0!important; }
+.inventory-native-date { height:100%; opacity:0; pointer-events:none; position:absolute; right:0; top:0; width:38px!important; }
+.inventory-date-filter-actions { display:flex; align-items:center; gap:12px; margin-top:4px; }
+.inventory-date-filter-actions button { padding:8px 14px; }
+.account-action { border-radius:4px; color:#fff!important; display:inline-block; font-size:12px; font-weight:800; min-width:78px; padding:7px 10px; text-align:center; text-transform:uppercase; }
+.account-action-activate { background:#16803c; }
+.account-action-deactivate { background:#c81e1e; }
+.account-action:hover { background:#ea6600; }
+.account-action-disabled { color:#667085; font-size:12px; font-weight:700; }
 #user-tools { color:#dcecff; }
 #user-tools a { color:#fff; border-bottom-color:rgba(255,255,255,.45); }
 .row-action { border-radius:2px; }
@@ -41,6 +55,20 @@ input[type="submit"]:hover, button:hover, .button:hover, a.button:hover, .object
 .deletion-details summary, .deletion-details h2 { color:#002a7d; }
 .confirmation-icon-danger { background:#fee4e2; color:#b42318; }
 .confirmation-icon-warning { background:#fff4e5; color:#b54708; }
+.confirmation-icon-success { background:#dcfce7; color:#16803c; }
+.account-confirmation-summary { border:1px solid #dce5f2; border-radius:3px; margin:24px 0 4px; overflow:hidden; }
+.account-confirmation-summary > div { align-items:center; display:grid; gap:16px; grid-template-columns:130px minmax(0, 1fr); padding:13px 16px; }
+.account-confirmation-summary > div + div { border-top:1px solid #dce5f2; }
+.account-confirmation-summary dt { color:#526079; font-size:12px; font-weight:800; letter-spacing:.04em; text-transform:uppercase; }
+.account-confirmation-summary dd { color:#000716; font-weight:700; margin:0; overflow-wrap:anywhere; }
+.account-status-pill { border-radius:20px; display:inline-block; font-size:12px; padding:4px 10px; }
+.account-status-pill.is-active { background:#dcfce7; color:#166534; }
+.account-status-pill.is-inactive { background:#fff4e5; color:#9a3412; }
+.confirmation-actions button.button-primary { min-width:150px; }
+@media (max-width:600px) {
+  .account-confirmation-summary > div { align-items:start; grid-template-columns:1fr; gap:4px; }
+  .confirmation-actions > * { box-sizing:border-box; width:100%; }
+}
 .confirmation-actions a.button-secondary, .excel-form-actions .button-secondary { background:#526079!important; color:#fff!important; }
 .confirmation-actions a.button-secondary:hover, .excel-form-actions .button-secondary:hover { background:#000716!important; }
 .excel-import-icon { border-radius:2px; background:#eaf6fc; color:#002a7d; }

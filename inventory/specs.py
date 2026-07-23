@@ -63,25 +63,34 @@ def get_section_state(key):
     }
     for values in options.values():
         values.sort(key=lambda value: str(value).casefold())
+    mutcd_word_options = build_word_options(mutcd_map, mutcd_word_fallback)
     return {
         "options": options,
         "mutcd_map": mutcd_map,
         "mutcd_to_class": mutcd_to_class,
         "mutcd_word_fallback": mutcd_word_fallback,
-        "mutcd_reverse_map": build_reverse_map(mutcd_map, mutcd_word_fallback),
+        "mutcd_word_options": mutcd_word_options,
+        "mutcd_reverse_map": {
+            code: words[0] for code, words in mutcd_word_options.items() if words
+        },
         "type_map": type_map,
     }
 
 
-def build_reverse_map(mutcd_map, mutcd_word_fallback):
-    reverse_map = dict(mutcd_word_fallback)
-    seen = set()
+def build_word_options(mutcd_map, mutcd_word_fallback):
+    """Return every selectable word description grouped by MUTCD code."""
+    options = {}
     for word, info in mutcd_map.items():
         code = info.get("MUTCD", "")
-        if code and code not in seen:
-            reverse_map[code] = word
-            seen.add(code)
-    return reverse_map
+        if code:
+            options.setdefault(code, []).append(word)
+    # A fallback remains useful only when no explicit mapping exists.
+    for code, word in mutcd_word_fallback.items():
+        if code and word and code not in options:
+            options[code] = [word]
+    for words in options.values():
+        words.sort(key=str.casefold)
+    return options
 
 
 def compute_auto_fields(key, row, tab_state):
@@ -93,10 +102,10 @@ def compute_auto_fields(key, row, tab_state):
         ml = spec["mutcd_link"]
         mutcd_code = str(row.get(ml["code_field"], "")).strip()
         word_desc = str(row.get(ml["word_field"], "")).strip()
-        if mutcd_code and mutcd_code in tab_state["mutcd_to_class"]:
-            classification = tab_state["mutcd_to_class"][mutcd_code]
-        elif word_desc and word_desc in tab_state["mutcd_map"]:
+        if word_desc and word_desc in tab_state["mutcd_map"]:
             classification = tab_state["mutcd_map"][word_desc].get("MUTCD_CLASSIFICATION", "")
+        elif mutcd_code and mutcd_code in tab_state["mutcd_to_class"]:
+            classification = tab_state["mutcd_to_class"][mutcd_code]
         else:
             classification = ""
         row[ml["class_field"]] = classification

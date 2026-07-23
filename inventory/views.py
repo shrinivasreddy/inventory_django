@@ -1,17 +1,16 @@
 import io
 import hashlib
 import json
-import threading
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 
-from django.contrib.auth import get_user_model, login
+from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.password_validation import get_default_password_validators
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.http import JsonResponse, HttpResponseNotAllowed, HttpResponse
+from django.http import FileResponse, JsonResponse, HttpResponseNotAllowed, HttpResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from django.views.decorators.cache import never_cache
@@ -28,6 +27,14 @@ from .models import (
 )
 from .forms import SignUpForm
 from .assistant import AssistantError, interpret_inventory_prompt, transcribe_audio
+from .concurrency import section_write_locks as locks
+from .excel_security import safe_excel_cell
+from .image_storage import (
+    FOLDER_SECTIONS,
+    InventoryImageError,
+    record_image_directory,
+    save_record_image,
+)
 from .specs import (
     TAB_ORDER,
     compute_auto_fields,
@@ -35,15 +42,6 @@ from .specs import (
     get_spec,
     missing_required_fields,
 )
-
-# One lock per tab, held around every read-modify-write sequence, same
-# rationale as the Flask version: with a single-process WSGI deployment
-# (see README -- this remains a hard requirement), this prevents two
-# concurrent requests from racing on ID generation or a renumber. Django's
-# own transaction.atomic() gives us automatic rollback-on-exception on top
-# of that, which the Flask/JSON-file version had to do by hand.
-locks = {key: threading.Lock() for key in TAB_ORDER}
-
 
 def invalid_date_fields(spec, row):
     """Return date fields that are not valid MM-DD-YYYY calendar dates."""
@@ -139,12 +137,16 @@ def signup(request):
     if request.method == "POST":
         form = SignUpForm(request.POST)
         if form.is_valid():
-            user = form.save()
-            login(request, user)
-            return redirect("home")
+            form.save()
+            return redirect("signup_pending")
     else:
         form = SignUpForm()
     return render(request, "registration/signup.html", {"form": form})
+
+
+@require_GET
+def signup_pending(request):
+    return render(request, "registration/signup_pending.html")
 
 
 @require_POST
@@ -217,6 +219,12 @@ def api_assistant_transcribe(request):
         return JsonResponse({"error": "No voice recording was provided."}, status=400)
     if audio.size > 10 * 1024 * 1024:
         return JsonResponse({"error": "Voice recordings must be 10 MB or smaller."}, status=400)
+    allowed_audio_types = {
+        "audio/webm", "audio/wav", "audio/x-wav", "audio/mpeg",
+        "audio/mp4", "audio/ogg", "video/webm",
+    }
+    if audio.content_type not in allowed_audio_types:
+        return JsonResponse({"error": "The uploaded file is not a supported voice recording."}, status=400)
     try:
         text = transcribe_audio(audio.read(), audio.name, audio.content_type)
     except AssistantError as exc:
@@ -241,6 +249,7 @@ def api_spec(request, key):
         "dropdown_fields": spec["dropdown_fields"],
         "text_fields": spec["text_fields"],
         "auto_fields": spec["auto_fields"],
+        "image_field": "IMAGE_LINK",
         "date_fields": spec["date_fields"],
         "uid_field": spec["uid_field"],
         "uid_prefix": spec["uid_prefix"],
@@ -255,6 +264,7 @@ def api_spec(request, key):
         "options": state["options"],
         "mutcd_map": state["mutcd_map"],
         "mutcd_to_class": state["mutcd_to_class"],
+        "mutcd_word_options": state["mutcd_word_options"],
         "mutcd_reverse_map": state["mutcd_reverse_map"],
         "auto_fill_map": spec.get("auto_fill_map"),
         "type_map": state["type_map"],
@@ -287,6 +297,7 @@ def api_records(request, key):
             return JsonResponse({"error": "Malformed request: 'row' must be an object."}, status=400)
         row = {c: str(raw_row.get(c, "") or "") for c in spec["columns"]}
         row.pop("ID", None)
+        row["IMAGE_LINK"] = ""
         invalid_dates = invalid_date_fields(spec, row)
         if invalid_dates:
             return JsonResponse(
@@ -363,6 +374,10 @@ def api_record_detail(request, key, rec_id):
             except TabRecord.DoesNotExist:
                 return JsonResponse({"error": "Record not found"}, status=404)
 
+            # Image links are generated only by the upload endpoint. Preserve
+            # the existing value during normal record edits.
+            row["IMAGE_LINK"] = str(rec.data.get("IMAGE_LINK", "") or "")
+
             ts_dict = get_section_state(key)
             row = compute_auto_fields(key, row, ts_dict)
             missing = missing_required_fields(key, row)
@@ -393,6 +408,57 @@ def api_record_detail(request, key, rec_id):
     return HttpResponseNotAllowed(["PUT", "DELETE"])
 
 
+@api_login_required
+@require_POST
+def api_record_image(request, key, rec_id):
+    if key not in TAB_ORDER:
+        return JsonResponse({"error": "Unknown tab"}, status=404)
+    try:
+        rec = visible_tab_records(request, key).get(tab_record_id=rec_id)
+    except TabRecord.DoesNotExist:
+        return JsonResponse({"error": "Record not found"}, status=404)
+    upload = request.FILES.get("image")
+    if upload is None:
+        return JsonResponse({"error": "Choose an image to upload."}, status=400)
+    try:
+        filename, _ = save_record_image(key, rec_id, upload)
+    except InventoryImageError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except OSError:
+        return JsonResponse({"error": "The image could not be saved on the server."}, status=500)
+
+    folder = next(folder for folder, section in FOLDER_SECTIONS.items() if section == key)
+    image_path = f"/uploads/images/{folder}/{rec_id}/{filename}"
+    image_url = request.build_absolute_uri(image_path)
+    data = dict(rec.data)
+    data["IMAGE_LINK"] = image_url
+    rec.data = data
+    rec.save(update_fields=["data", "updated_at"])
+    return JsonResponse({"record": rec.as_row()})
+
+
+@login_required
+@require_GET
+def inventory_image(request, folder, rec_id, filename):
+    key = FOLDER_SECTIONS.get(folder)
+    if key is None or filename not in {"image.jpg", "image.png", "image.webp"}:
+        return JsonResponse({"error": "Image not found"}, status=404)
+    try:
+        visible_tab_records(request, key).get(tab_record_id=rec_id)
+    except TabRecord.DoesNotExist:
+        return JsonResponse({"error": "Image not found"}, status=404)
+    path = record_image_directory(key, rec_id) / filename
+    if not path.is_file():
+        return JsonResponse({"error": "Image not found"}, status=404)
+    content_type = {
+        ".jpg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
+    }[path.suffix.lower()]
+    response = FileResponse(path.open("rb"), content_type=content_type)
+    response["Content-Disposition"] = f'inline; filename="{filename}"'
+    response["Cache-Control"] = "private, max-age=3600"
+    return response
+
+
 # ---------------------------------------------------------------------------
 # Dropdown "+" add option
 # ---------------------------------------------------------------------------
@@ -412,10 +478,12 @@ def api_options(request, key):
     data = parse_json_body(request)
     field = data.get("field")
     value = str(data.get("value") or "").strip()
-    if not field or not isinstance(field, str) or field not in spec["columns"]:
+    if not field or not isinstance(field, str) or field not in spec["dropdown_fields"]:
         return JsonResponse({"error": "A valid field name is required."}, status=400)
     if not value:
         return JsonResponse({"error": "value is required"}, status=400)
+    if len(value) > 500:
+        return JsonResponse({"error": "value must be 500 characters or fewer"}, status=400)
     if field not in spec["preserve_case_fields"]:
         value = value.upper()
 
@@ -467,6 +535,7 @@ def api_options(request, key):
             }
             refreshed = get_section_state(key)
             result["mutcd_reverse_map"] = refreshed["mutcd_reverse_map"]
+            result["mutcd_word_options"] = refreshed["mutcd_word_options"]
 
         afm = spec.get("auto_fill_map")
         if afm and field == afm["driver_field"] and value not in state["type_map"]:
@@ -532,7 +601,7 @@ def write_sheet(key, ws, records):
                     val = int(fval) if fval.is_integer() else fval
                 except (TypeError, ValueError):
                     pass
-            values.append(val)
+            values.append(safe_excel_cell(val))
         ws.append(values)
 
     for col_idx, col_name in enumerate(columns, start=1):

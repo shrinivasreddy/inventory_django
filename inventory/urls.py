@@ -1,12 +1,13 @@
 from django.urls import path
 from django.contrib.auth import views as auth_views
 from . import views
-from .forms import PasswordResetRequestForm
+from .forms import ApprovalAuthenticationForm, PasswordResetRequestForm
 
 urlpatterns = [
     path(
         "login/",
         auth_views.LoginView.as_view(
+            authentication_form=ApprovalAuthenticationForm,
             template_name="registration/login.html",
             redirect_authenticated_user=True,
         ),
@@ -14,6 +15,7 @@ urlpatterns = [
     ),
     path("logout/", auth_views.LogoutView.as_view(), name="logout"),
     path("signup/", views.signup, name="signup"),
+    path("signup/pending/", views.signup_pending, name="signup_pending"),
     path(
         "signup/password-requirements/",
         views.password_requirements,
@@ -61,6 +63,12 @@ urlpatterns = [
     path("api/<str:key>/spec", views.api_spec, name="api_spec"),
     path("api/<str:key>/records", views.api_records, name="api_records"),
     path("api/<str:key>/records/<int:rec_id>", views.api_record_detail, name="api_record_detail"),
+    path("api/<str:key>/records/<int:rec_id>/image", views.api_record_image, name="api_record_image"),
+    path(
+        "uploads/images/<str:folder>/<int:rec_id>/<str:filename>",
+        views.inventory_image,
+        name="inventory_image",
+    ),
     path("api/<str:key>/options", views.api_options, name="api_options"),
     path("api/<str:key>/export", views.api_export, name="api_export"),
 ]

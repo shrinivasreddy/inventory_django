@@ -1,16 +1,27 @@
+from datetime import datetime, timedelta
 import io
 import json
 import re
 from unittest.mock import patch
 
+from django.conf import settings
 from django.core import mail
 from django.contrib.auth.models import User
 from django.test import Client, TestCase, override_settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
+from django.utils import timezone
 from openpyxl import Workbook, load_workbook
 
-from .models import DropdownOption, InventorySection, MutcdMapping, TabRecord
+from .middleware import LAST_ACTIVITY_KEY
+from .models import (
+    DropdownOption,
+    InventorySection,
+    MutcdClassification,
+    MutcdFallback,
+    MutcdMapping,
+    TabRecord,
+)
 
 
 class AuthenticationTests(TestCase):
@@ -32,6 +43,7 @@ class AuthenticationTests(TestCase):
 
     def test_login_grants_access_and_logout_revokes_it(self):
         response = self.client.get(reverse("login"))
+        self.assertContains(response, "inventory/js/password-visibility")
         csrf = response.cookies["csrftoken"].value
         response = self.client.post(
             reverse("login"),
@@ -47,6 +59,53 @@ class AuthenticationTests(TestCase):
         self.assertContains(home_response, "saveCurrentDraft")
         self.assertContains(home_response, "restoreCurrentDraft")
         self.assertNotContains(home_response, "clearForm(true)")
+        self.assertIn("default-src 'self'", home_response["Content-Security-Policy"])
+        self.assertEqual(home_response["Cache-Control"], "no-store, private")
+        self.assertIn("microphone=(self)", home_response["Permissions-Policy"])
+
+
+    def test_session_timeout_defaults_are_security_focused(self):
+        self.assertEqual(settings.SESSION_COOKIE_AGE, 8 * 60 * 60)
+        self.assertTrue(settings.SESSION_EXPIRE_AT_BROWSER_CLOSE)
+        self.assertTrue(settings.SESSION_SAVE_EVERY_REQUEST)
+
+    @override_settings(SESSION_COOKIE_AGE=3600)
+    def test_inactive_session_is_rejected(self):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session[LAST_ACTIVITY_KEY] = int(
+            (timezone.now() - timedelta(seconds=3601)).timestamp()
+        )
+        session.save()
+
+        response = self.client.get(reverse("home"))
+
+        self.assertRedirects(response, f"{reverse('login')}?next=/")
+
+    @override_settings(SESSION_COOKIE_AGE=3600)
+    def test_legacy_two_week_session_is_rejected(self):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session.set_expiry(14 * 24 * 60 * 60)
+        session.pop(LAST_ACTIVITY_KEY, None)
+        session.save()
+
+        response = self.client.get(reverse("home"))
+
+        self.assertRedirects(response, f"{reverse('login')}?next=/")
+
+    @override_settings(SESSION_COOKIE_AGE=3600)
+    def test_recent_session_remains_authenticated(self):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session[LAST_ACTIVITY_KEY] = int(
+            (timezone.now() - timedelta(seconds=60)).timestamp()
+        )
+        session.save()
+
+        response = self.client.get(reverse("home"))
+
+        self.assertEqual(response.status_code, 200)
 
     def test_assistant_preview_requires_authentication(self):
         csrf = self.client.get(reverse("login")).cookies["csrftoken"].value
@@ -115,8 +174,25 @@ class AuthenticationTests(TestCase):
         self.assertRedirects(response, reverse("login"))
         self.assertEqual(self.client.get(reverse("home")).status_code, 302)
 
-    def test_signup_creates_database_user_and_logs_them_in(self):
+    def test_voice_transcription_rejects_non_audio_uploads(self):
+        self.client.force_login(self.user)
+        csrf = self.client.get(reverse("home")).cookies["csrftoken"].value
+        upload = SimpleUploadedFile(
+            "instructions.txt",
+            b"not an audio recording",
+            content_type="text/plain",
+        )
+        response = self.client.post(
+            reverse("api_assistant_transcribe"),
+            {"audio": upload},
+            HTTP_X_CSRFTOKEN=csrf,
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("supported voice recording", response.json()["error"])
+
+    def test_signup_creates_inactive_user_pending_admin_approval(self):
         response = self.client.get(reverse("signup"))
+        self.assertContains(response, "inventory/js/password-visibility")
         csrf = response.cookies["csrftoken"].value
         response = self.client.post(
             reverse("signup"),
@@ -128,9 +204,121 @@ class AuthenticationTests(TestCase):
             },
             HTTP_X_CSRFTOKEN=csrf,
         )
-        self.assertRedirects(response, reverse("home"))
-        self.assertTrue(User.objects.filter(username="newuser", email="new@example.com").exists())
-        self.assertEqual(self.client.get(reverse("home")).status_code, 200)
+        self.assertRedirects(response, reverse("signup_pending"))
+        user = User.objects.get(username="newuser", email="new@example.com")
+        self.assertFalse(user.is_active)
+        self.assertContains(self.client.get(reverse("signup_pending")), "pending administrator approval")
+        self.assertContains(self.client.get(reverse("signup_pending")), "auth-status-card")
+        self.assertContains(self.client.get(reverse("signup_pending")), "Return to login")
+        self.assertRedirects(self.client.get(reverse("home")), f"{reverse('login')}?next=/")
+
+    def test_inactive_user_gets_pending_or_deactivated_login_message(self):
+        self.user.is_active = False
+        self.user.save(update_fields=["is_active"])
+        response = self.client.get(reverse("login"))
+        csrf = response.cookies["csrftoken"].value
+        response = self.client.post(
+            reverse("login"),
+            {"username": self.user.username, "password": "StrongPass!234"},
+            HTTP_X_CSRFTOKEN=csrf,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "pending administrator approval or has been deactivated")
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        APP_BASE_URL="https://inventory.example.com",
+    )
+    def test_admin_approval_sends_email_and_enables_login(self):
+        self.user.is_active = False
+        self.user.save(update_fields=["is_active"])
+
+        with self.captureOnCommitCallbacks(execute=True):
+            self.user.is_active = True
+            self.user.save(update_fields=["is_active"])
+
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].subject, "Bluedome Inventory account approved")
+        self.assertIn("https://inventory.example.com/login/", mail.outbox[0].body)
+        self.assertTrue(self.client.login(username=self.user.username, password="StrongPass!234"))
+
+        self.user.is_active = False
+        self.user.save(update_fields=["is_active"])
+        self.assertRedirects(self.client.get(reverse("home")), f"{reverse('login')}?next=/")
+        self.client.logout()
+        self.assertFalse(self.client.login(username=self.user.username, password="StrongPass!234"))
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_admin_user_list_has_visible_activate_and_deactivate_buttons(self):
+        admin_user = User.objects.create_superuser(
+            username="approvaladmin",
+            email="approvaladmin@example.com",
+            password="StrongPass!234",
+        )
+        pending = User.objects.create_user(
+            username="pendinguser",
+            email="pending@example.com",
+            password="StrongPass!234",
+            is_active=False,
+        )
+        self.client.force_login(admin_user)
+
+        changelist = self.client.get(reverse("admin:auth_user_changelist"))
+        self.assertContains(changelist, "Activate")
+        self.assertContains(changelist, "Deactivate")
+        self.assertContains(changelist, "Pending / inactive")
+
+        activate_url = reverse("admin:auth_user_activate_account", args=[pending.pk])
+        confirmation = self.client.get(activate_url)
+        self.assertContains(confirmation, "Activate user")
+        self.assertContains(confirmation, "account-confirmation-summary")
+        self.assertContains(confirmation, "Current status")
+        csrf = self.client.cookies["csrftoken"].value
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(activate_url, HTTP_X_CSRFTOKEN=csrf)
+        self.assertRedirects(response, reverse("admin:auth_user_changelist"))
+        pending.refresh_from_db()
+        self.assertTrue(pending.is_active)
+        self.assertEqual(len(mail.outbox), 1)
+
+        deactivate_url = reverse("admin:auth_user_deactivate_account", args=[self.user.pk])
+        confirmation = self.client.get(deactivate_url)
+        self.assertContains(confirmation, "Deactivate user")
+        csrf = self.client.cookies["csrftoken"].value
+        response = self.client.post(deactivate_url, HTTP_X_CSRFTOKEN=csrf)
+        self.assertRedirects(response, reverse("admin:auth_user_changelist"))
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.is_active)
+        self.assertEqual(len(mail.outbox), 2)
+        self.assertEqual(mail.outbox[1].subject, "Bluedome Inventory account deactivated")
+        self.assertIn("can no longer access", mail.outbox[1].body)
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend")
+    def test_admin_activation_warns_when_smtp_is_not_configured(self):
+        admin_user = User.objects.create_superuser(
+            username="emailadmin",
+            email="emailadmin@example.com",
+            password="StrongPass!234",
+        )
+        pending = User.objects.create_user(
+            username="emailpending",
+            email="emailpending@example.com",
+            password="StrongPass!234",
+            is_active=False,
+        )
+        self.client.force_login(admin_user)
+        activate_url = reverse("admin:auth_user_activate_account", args=[pending.pk])
+        self.client.get(activate_url)
+        csrf = self.client.cookies["csrftoken"].value
+        response = self.client.post(
+            activate_url,
+            HTTP_X_CSRFTOKEN=csrf,
+            follow=True,
+        )
+        self.assertContains(response, "SMTP is not configured")
+        pending.refresh_from_db()
+        self.assertTrue(pending.is_active)
 
     def test_duplicate_email_is_rejected(self):
         response = self.client.get(reverse("signup"))
@@ -237,7 +425,7 @@ class AuthenticationTests(TestCase):
         )
         self.assertRedirects(response, reverse("password_reset_done"))
         self.assertEqual(len(mail.outbox), 1)
-        self.assertEqual(mail.outbox[0].subject, "Bluedome Inventory")
+        self.assertEqual(mail.outbox[0].subject, "Bluedome Inventory password reset")
         self.assertNotIn("StrongPass!234", mail.outbox[0].body)
 
         match = re.search(r"http://testserver(\S+)", mail.outbox[0].body)
@@ -424,6 +612,50 @@ class DatabaseConfigurationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(TabRecord.objects.get().owner, self.user)
 
+    def test_admin_can_filter_inventory_by_date_added_range(self):
+        older = TabRecord.objects.create(
+            owner=self.user,
+            tab="sign",
+            tab_record_id=1,
+            data={"ST_ID": "OLD", "POLE_ID": "P1", "SIGN": "S1"},
+        )
+        newer = TabRecord.objects.create(
+            owner=self.user,
+            tab="sign",
+            tab_record_id=2,
+            data={"ST_ID": "NEW", "POLE_ID": "P2", "SIGN": "S2"},
+        )
+        target_date = timezone.localdate() - timedelta(days=2)
+        older_date = target_date - timedelta(days=3)
+        TabRecord.objects.filter(pk=older.pk).update(
+            created_at=timezone.make_aware(
+                datetime.combine(older_date, datetime.min.time())
+            )
+        )
+        TabRecord.objects.filter(pk=newer.pk).update(
+            created_at=timezone.make_aware(
+                datetime.combine(target_date, datetime.min.time())
+            )
+        )
+
+        self.client.force_login(self.admin_user)
+        response = self.client.get(
+            reverse("admin:inventory_tabrecord_changelist"),
+            {
+                "date_from": target_date.strftime("%m-%d-%Y"),
+                "date_to": target_date.strftime("%m-%d-%Y"),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Date added")
+        self.assertContains(response, "MM-DD-YYYY")
+        self.assertContains(response, 'type="date"')
+        self.assertContains(response, "Choose From date")
+        self.assertContains(response, "Choose To date")
+        self.assertEqual(response.context["cl"].result_count, 1)
+        self.assertEqual(response.context["cl"].result_list[0].pk, newer.pk)
+
     def test_inventory_dates_require_mm_dd_yyyy(self):
         self.client.force_login(self.user)
         row = {
@@ -485,6 +717,12 @@ class DatabaseConfigurationTests(TestCase):
             mutcd_code="testcode",
             classification="testcl",
         )
+        MutcdMapping.objects.create(
+            section=section,
+            word_description="testdesc alternate",
+            mutcd_code="testcode",
+            classification="alternate class",
+        )
         self.client.force_login(self.user)
         response = self.client.get(reverse("api_spec", args=["sign"]))
         self.assertEqual(response.status_code, 200)
@@ -493,7 +731,30 @@ class DatabaseConfigurationTests(TestCase):
         self.assertIn("testdesc", data["options"]["WORD_DESCRIPTION"])
         self.assertEqual(data["mutcd_to_class"]["testcode"], "testcl")
         self.assertEqual(data["mutcd_map"]["testdesc"]["MUTCD"], "testcode")
+        self.assertEqual(
+            data["mutcd_word_options"]["testcode"],
+            ["testdesc", "testdesc alternate"],
+        )
         self.assertIn("no-store", response["Cache-Control"])
+
+        save_response = self.client.post(
+            reverse("api_records", args=["sign"]),
+            data=json.dumps({
+                "row": {
+                    "ST_ID": "100",
+                    "POLE_ID": "P1",
+                    "SIGN": "S1",
+                    "MUTCD": "testcode",
+                    "WORD_DESCRIPTION": "testdesc alternate",
+                }
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(save_response.status_code, 200)
+        self.assertEqual(
+            save_response.json()["record"]["MUTCD_CLASSIFICATION"],
+            "alternate class",
+        )
 
     def test_all_database_dropdown_values_are_alphabetically_sorted(self):
         self.client.force_login(self.user)
@@ -663,6 +924,109 @@ class DatabaseConfigurationTests(TestCase):
             ).exists()
         )
 
+    def test_mutcd_excel_import_updates_existing_and_adds_new_without_duplicates(self):
+        existing = MutcdMapping.objects.create(
+            section_id="sign",
+            word_description="Existing sign",
+            mutcd_code="OLD",
+            classification="Old classification",
+        )
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.append(["Section", "Word description", "MUTCD code", "Classification"])
+        worksheet.append(["sign", "Existing sign", "UPDATED", "Updated classification"])
+        worksheet.append(["sign", "New sign one", "NEW-1", "New classification"])
+        worksheet.append(["sign", "New sign two", "NEW-2", "New classification"])
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        upload = SimpleUploadedFile(
+            "mutcd-upsert.xlsx",
+            buffer.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        self.client.force_login(self.admin_user)
+        response = self.client.post(
+            reverse("admin:inventory_mutcdmapping_import_excel"),
+            {"excel_file": upload},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Successfully imported 3 mutcd mappings")
+        self.assertContains(response, "2 created, 1 updated")
+        existing.refresh_from_db()
+        self.assertEqual(existing.mutcd_code, "UPDATED")
+        self.assertEqual(existing.classification, "Updated classification")
+        self.assertEqual(
+            MutcdMapping.objects.filter(
+                section_id="sign",
+                word_description="Existing sign",
+            ).count(),
+            1,
+        )
+        self.assertTrue(
+            MutcdMapping.objects.filter(
+                section_id="sign",
+                word_description="New sign one",
+                mutcd_code="NEW-1",
+                classification="New classification",
+            ).exists()
+        )
+        self.assertTrue(
+            MutcdMapping.objects.filter(
+                section_id="sign",
+                word_description="New sign two",
+                mutcd_code="NEW-2",
+                classification="New classification",
+            ).exists()
+        )
+
+    def test_mutcd_import_syncs_classification_and_deterministic_fallback(self):
+        MutcdFallback.objects.create(
+            section_id="sign",
+            code="W13-1P-TEST",
+            word_description="Old fallback",
+        )
+        workbook = Workbook()
+        worksheet = workbook.active
+        worksheet.append(["Section", "Word description", "MUTCD code", "Classification"])
+        worksheet.append(["sign", "10 M P H TEST", "W13-1P-TEST", "WARNING SIGN"])
+        worksheet.append(["sign", "25 M P H TEST", "W13-1P-TEST", "WARNING SIGN"])
+        buffer = io.BytesIO()
+        workbook.save(buffer)
+        upload = SimpleUploadedFile(
+            "mutcd-related-sync.xlsx",
+            buffer.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+        self.client.force_login(self.admin_user)
+        response = self.client.post(
+            reverse("admin:inventory_mutcdmapping_import_excel"),
+            {"excel_file": upload},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            MutcdFallback.objects.get(
+                section_id="sign", code="W13-1P-TEST"
+            ).word_description,
+            "10 M P H TEST",
+        )
+        self.assertEqual(
+            MutcdClassification.objects.get(
+                section_id="sign", code="W13-1P-TEST"
+            ).classification,
+            "WARNING SIGN",
+        )
+        self.assertEqual(
+            MutcdMapping.objects.filter(
+                section_id="sign", mutcd_code="W13-1P-TEST"
+            ).count(),
+            2,
+        )
     def test_empty_configuration_workbook_is_rejected(self):
         workbook = Workbook()
         worksheet = workbook.active
@@ -720,6 +1084,21 @@ class DatabaseConfigurationTests(TestCase):
         self.assertContains(response, "Row 3: missing required values POLE_ID")
         self.assertEqual(TabRecord.objects.filter(tab="sign").count(), 0)
 
+    @override_settings(MAX_XLSX_UNCOMPRESSED_BYTES=1)
+    def test_excel_import_rejects_workbook_expansion_over_limit(self):
+        self.client.force_login(self.admin_user)
+        upload = self._excel_upload(
+            "sign",
+            [{"ST_ID": "100", "POLE_ID": "P1", "SIGN": "S1"}],
+        )
+        response = self.client.post(
+            reverse("admin:inventory_tabrecord_import_excel"),
+            {"section": "sign", "excel_file": upload},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "expands beyond the safe processing limit")
+        self.assertFalse(TabRecord.objects.exists())
+
     def test_admin_excel_template_and_full_export(self):
         self.client.force_login(self.admin_user)
         template_response = self.client.get(
@@ -747,6 +1126,28 @@ class DatabaseConfigurationTests(TestCase):
         sign_sheet = export_book["Sign Inventory"]
         self.assertEqual(sign_sheet["A2"].value, 1)
         self.assertEqual(sign_sheet["B2"].value, "100")
+
+    def test_excel_export_neutralizes_formula_cells(self):
+        self.client.force_login(self.user)
+        TabRecord.objects.create(
+            tab="sign",
+            tab_record_id=1,
+            owner=self.user,
+            data={
+                "ST_ID": "100",
+                "STREET_NAME": '=HYPERLINK("https://example.invalid","click")',
+                "POLE_ID": "P1",
+                "SIGN": "S1",
+                "SIGN_UID": "SR_100_P1_S1",
+            },
+        )
+        response = self.client.get(reverse("api_export", args=["sign"]))
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(io.BytesIO(response.content), data_only=False)
+        sheet = workbook.active
+        headers = [cell.value for cell in sheet[1]]
+        street_name_column = headers.index("STREET_NAME") + 1
+        self.assertTrue(sheet.cell(2, street_name_column).value.startswith("'="))
 
     def test_regular_user_cannot_access_admin_excel_tools(self):
         self.client.force_login(self.user)
@@ -779,6 +1180,16 @@ class DatabaseConfigurationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(
             DropdownOption.objects.filter(value="AUTHORIZED VALUE").exists()
+        )
+
+        response = self.client.post(
+            reverse("api_options", args=["sign"]),
+            data='{"field":"LATITUDE","value":"SHOULD NOT BE CREATED"}',
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(
+            DropdownOption.objects.filter(value="SHOULD NOT BE CREATED").exists()
         )
 
     @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")

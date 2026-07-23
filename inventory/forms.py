@@ -1,7 +1,10 @@
 from django import forms
-from django.contrib.auth.forms import PasswordResetForm, UserCreationForm
+from django.contrib.auth.forms import AuthenticationForm, PasswordResetForm, UserCreationForm
+from django.core.exceptions import ValidationError
 from django.contrib.auth.models import User
 from django.core.validators import RegexValidator
+from django.conf import settings
+from zipfile import BadZipFile, LargeZipFile, ZipFile
 
 from .models import InventorySection
 
@@ -18,6 +21,27 @@ strict_email_widget = forms.EmailInput(
         "title": "Enter a valid email address, for example name@example.com.",
     }
 )
+
+
+def validate_xlsx_upload(uploaded_file):
+    if not uploaded_file.name.lower().endswith(".xlsx"):
+        raise forms.ValidationError("Only .xlsx Excel workbooks are supported.")
+    if uploaded_file.size > settings.MAX_XLSX_UPLOAD_BYTES:
+        raise forms.ValidationError("The workbook must be 20 MB or smaller.")
+    try:
+        with ZipFile(uploaded_file) as archive:
+            entries = archive.infolist()
+            if len(entries) > settings.MAX_XLSX_ARCHIVE_ENTRIES:
+                raise forms.ValidationError("The workbook contains too many internal files.")
+            if any(entry.flag_bits & 0x1 for entry in entries):
+                raise forms.ValidationError("Password-protected workbooks are not supported.")
+            if sum(entry.file_size for entry in entries) > settings.MAX_XLSX_UNCOMPRESSED_BYTES:
+                raise forms.ValidationError("The workbook expands beyond the safe processing limit.")
+    except (BadZipFile, LargeZipFile, OSError):
+        raise forms.ValidationError("The uploaded file is not a valid .xlsx workbook.")
+    finally:
+        uploaded_file.seek(0)
+    return uploaded_file
 
 
 class SignUpForm(UserCreationForm):
@@ -40,9 +64,30 @@ class SignUpForm(UserCreationForm):
     def save(self, commit=True):
         user = super().save(commit=False)
         user.email = self.cleaned_data["email"]
+        user.is_active = False
         if commit:
             user.save()
         return user
+
+
+class ApprovalAuthenticationForm(AuthenticationForm):
+    """Explain inactive-account failures only after the password is verified."""
+
+    inactive_message = (
+        "Your account is pending administrator approval or has been deactivated. "
+        "Please contact an administrator."
+    )
+
+    def clean(self):
+        try:
+            return super().clean()
+        except ValidationError as error:
+            username = self.data.get("username", "")
+            password = self.data.get("password", "")
+            user = User.objects.filter(username__iexact=username).first()
+            if user and not user.is_active and user.check_password(password):
+                raise ValidationError(self.inactive_message, code="inactive")
+            raise error
 
 
 class PasswordResetRequestForm(PasswordResetForm):
@@ -65,12 +110,7 @@ class InventoryExcelImportForm(forms.Form):
     )
 
     def clean_excel_file(self):
-        uploaded_file = self.cleaned_data["excel_file"]
-        if not uploaded_file.name.lower().endswith(".xlsx"):
-            raise forms.ValidationError("Only .xlsx Excel workbooks are supported.")
-        if uploaded_file.size > 20 * 1024 * 1024:
-            raise forms.ValidationError("The workbook must be 20 MB or smaller.")
-        return uploaded_file
+        return validate_xlsx_upload(self.cleaned_data["excel_file"])
 
 
 class ConfigurationExcelImportForm(forms.Form):
@@ -81,9 +121,4 @@ class ConfigurationExcelImportForm(forms.Form):
     )
 
     def clean_excel_file(self):
-        uploaded_file = self.cleaned_data["excel_file"]
-        if not uploaded_file.name.lower().endswith(".xlsx"):
-            raise forms.ValidationError("Only .xlsx Excel workbooks are supported.")
-        if uploaded_file.size > 20 * 1024 * 1024:
-            raise forms.ValidationError("The workbook must be 20 MB or smaller.")
-        return uploaded_file
+        return validate_xlsx_upload(self.cleaned_data["excel_file"])

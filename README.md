@@ -74,9 +74,9 @@ defaults):
   reverse proxy).
 
 ## Setup
-Requires Python 3.8 or newer (Django 4.2 LTS, pinned in requirements.txt,
-supports 3.8 through 3.12 -- check with `python --version` if install
-fails with a "no matching distribution" error).
+Requires Python 3.10 or newer. Django 5.2 LTS is pinned in
+`requirements.txt`; check with `python --version` if installation fails with
+a "no matching distribution" error.
 
 ```bash
 pip install -r requirements.txt
@@ -120,6 +120,15 @@ authenticated users can use inventory records but cannot access the admin or
 add reference options. Admin changes are read directly from the database and
 appear without editing JSON files.
 
+New registrations are created inactive and cannot log in until an administrator
+approves them from **Authentication and Authorization → Users**. Administrators
+can approve or deactivate accounts individually, or use the bulk actions on the
+user list. Activating an inactive account sends the user an approval email with
+the login link. Deactivated accounts lose access immediately, including existing
+sessions, and receive a deactivation notice. Forgot-password requests for active
+accounts send a single-use reset link. Configure SMTP and `DJANGO_APP_BASE_URL`
+in `.env` before use; the console backend is only suitable for local development.
+
 ## Deploying for your team (50 users)
 Same guidance as the Flask version, same reasoning:
 - `deploy/install_windows_service.bat` (NSSM) / `deploy/inventory-web.service`
@@ -133,23 +142,29 @@ Same guidance as the Flask version, same reasoning:
   ORM code doesn't care which database engine is underneath).
 - Back up `db.sqlite3` the way you'd back up any database -- it now holds
   everything `store/*.json` used to hold in the Flask version.
+- Set the reverse proxy request-body limit to 25 MB or less. Application-level
+  limits and compressed/uncompressed Excel limits are configurable in `.env`.
+- Run `python manage.py migrate`, `python manage.py collectstatic --noinput`,
+  `python manage.py check --deploy`, and the full test suite before each release.
+- Test database restore, password-reset email, TLS, and the optional AI
+  assistant in the actual deployment environment before go-live.
 
-## CSRF note
-The `/api/...` endpoints are marked `@csrf_exempt` since they're called as
-a JSON API from the same-origin frontend with no session-based
-authentication to protect. If you add login later, switch these to proper
-CSRF-token-protected requests instead of exempting them.
+## Security model
+
+All mutating application and admin endpoints require authentication, role
+checks where appropriate, and Django CSRF protection. Regular users only read
+their own inventory rows; staff administrators can read all rows. Responses
+for authenticated pages are marked private/no-store and receive CSP,
+clickjacking, content-type, referrer, and permissions-policy headers. Excel
+imports have compressed and expanded-size limits; exports neutralize values
+that spreadsheet programs could interpret as formulas.
 
 ## About `manage.py check --deploy`
 Running this will show warnings about `SECURE_SSL_REDIRECT`,
 `SESSION_COOKIE_SECURE`, `CSRF_COOKIE_SECURE`, and HSTS. These are all
 about HTTPS enforcement, deliberately left unset here rather than hardcoded
 -- forcing HTTPS redirects before your reverse proxy is actually serving
-HTTPS would just break the app. Once IIS/Nginx is confirmed handling HTTPS
-in front of this, you can set those four in `settings.py` for extra
-hardening; they're not required for the app to function correctly.
-
-## Not part of this migration
-No functional changes were made beyond the framework swap -- if you spot
-anything behaving differently from the Flask version, that's a bug in the
-migration, not an intentional change, and worth flagging.
+HTTPS would just break the app. Once IIS/Nginx is confirmed handling HTTPS,
+enable the corresponding `DJANGO_SECURE_*`, secure-cookie, and trusted-proxy
+settings in `.env`. Do not enable secure cookies while serving plain HTTP,
+because browsers will then withhold the authentication cookies.

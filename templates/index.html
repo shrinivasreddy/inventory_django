@@ -558,6 +558,7 @@ function restoreCurrentDraft() {
   Object.keys(draft.values).forEach(function (col) {
     if (fieldEls[col]) setVal(col, draft.values[col]);
   });
+  if (spec.mutcd_word_options) updateWordDescriptionChoices(getVal('MUTCD'));
   editingId = draft.editingId;
   var isEditing = editingId !== null;
   document.getElementById('update-btn').disabled = !isEditing;
@@ -600,11 +601,39 @@ function syncMutcdLink(changedField) {
   var mutcdCode = getVal('MUTCD');
   var wordDesc = getVal('WORD_DESCRIPTION');
   if (changedField === 'MUTCD') {
-    if (mutcdCode && spec.mutcd_reverse_map[mutcdCode]) setVal('WORD_DESCRIPTION', spec.mutcd_reverse_map[mutcdCode]);
-    else if (mutcdCode) setVal('WORD_DESCRIPTION', '');
+    var descriptions = updateWordDescriptionChoices(mutcdCode);
+    if (descriptions.length === 1) {
+      setVal('WORD_DESCRIPTION', descriptions[0]);
+    } else if (descriptions.length > 1) {
+      if (!descriptions.includes(wordDesc)) setVal('WORD_DESCRIPTION', '');
+      setStatus(descriptions.length + ' word descriptions are available. Choose the correct one.');
+      var wordInput = fieldEls['WORD_DESCRIPTION'];
+      if (wordInput) {
+        wordInput.focus();
+        if (wordInput.showPicker) {
+          try { wordInput.showPicker(); } catch (_error) { /* Datalist remains selectable. */ }
+        }
+      }
+    } else if (mutcdCode) {
+      setVal('WORD_DESCRIPTION', '');
+    }
   } else if (wordDesc && spec.mutcd_map[wordDesc]) {
     setVal('MUTCD', spec.mutcd_map[wordDesc].MUTCD || '');
+    updateWordDescriptionChoices(getVal('MUTCD'));
   }
+}
+
+function updateWordDescriptionChoices(mutcdCode) {
+  var descriptions = (spec.mutcd_word_options && spec.mutcd_word_options[mutcdCode]) || [];
+  var choices = mutcdCode ? descriptions : (spec.options['WORD_DESCRIPTION'] || []);
+  var datalist = document.getElementById('list_WORD_DESCRIPTION');
+  if (datalist) {
+    datalist.innerHTML = '';
+    choices.forEach(function (word) {
+      datalist.appendChild(el('option', { value: word }));
+    });
+  }
+  return descriptions;
 }
 
 function refreshAutoFields() {
@@ -620,8 +649,8 @@ function refreshAutoFields() {
     var mutcdCode = getVal('MUTCD');
     var wordDesc = getVal('WORD_DESCRIPTION');
     var classification = '';
-    if (mutcdCode && spec.mutcd_to_class[mutcdCode]) classification = spec.mutcd_to_class[mutcdCode];
-    else if (wordDesc && spec.mutcd_map[wordDesc]) classification = spec.mutcd_map[wordDesc].MUTCD_CLASSIFICATION || '';
+    if (wordDesc && spec.mutcd_map[wordDesc]) classification = spec.mutcd_map[wordDesc].MUTCD_CLASSIFICATION || '';
+    else if (mutcdCode && spec.mutcd_to_class[mutcdCode]) classification = spec.mutcd_to_class[mutcdCode];
     if (autoEls['MUTCD_CLASSIFICATION']) autoEls['MUTCD_CLASSIFICATION'].textContent = classification;
   }
 
@@ -712,6 +741,7 @@ function addDropdownOption(field) {
       };
     }
     if (data.mutcd_reverse_map) spec.mutcd_reverse_map = data.mutcd_reverse_map;
+    if (data.mutcd_word_options) spec.mutcd_word_options = data.mutcd_word_options;
     if (data.type_map_entry) spec.type_map[data.type_map_entry.driver_value] = data.type_map_entry.fields;
 
     onFieldChanged(field);
@@ -803,6 +833,7 @@ function clearForm(keepSticky) {
 
   editingId = null;
   delete tabDrafts[currentTabKey];
+  if (spec.mutcd_word_options) updateWordDescriptionChoices('');
   refreshAutoFields();
   document.getElementById('update-btn').disabled = true;
   document.getElementById('delete-btn').disabled = true;
@@ -818,6 +849,7 @@ function loadRecord(record) {
     var val = record[col] || '';
     setVal(col, spec.date_fields.includes(col) ? storedToIso(val) : val);
   });
+  if (spec.mutcd_word_options) updateWordDescriptionChoices(getVal('MUTCD'));
   editingId = record.ID;
   refreshAutoFields();
   if (autoEls['ID']) autoEls['ID'].textContent = String(record.ID);

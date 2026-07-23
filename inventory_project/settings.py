@@ -45,11 +45,13 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "inventory.middleware.SecurityHeadersMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "inventory.middleware.SessionExpiryMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -101,6 +103,11 @@ USE_TZ = True
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_DIRS = [BASE_DIR / "static"]
+# Uploaded inventory images are application data and are served through an
+# authenticated view, not by WhiteNoise.
+INVENTORY_UPLOAD_ROOT = Path(os.environ.get("DJANGO_INVENTORY_UPLOAD_ROOT", BASE_DIR / "uploads"))
+MAX_INVENTORY_IMAGE_BYTES = int(os.environ.get("DJANGO_MAX_INVENTORY_IMAGE_BYTES", str(10 * 1024 * 1024)))
+MAX_INVENTORY_IMAGE_PIXELS = int(os.environ.get("DJANGO_MAX_INVENTORY_IMAGE_PIXELS", "25000000"))
 # Serves static files (admin CSS/JS) directly from the WSGI process via
 # whitenoise, so the app is self-contained under waitress with no separate
 # static-file server needed. Run `python manage.py collectstatic` once
@@ -113,6 +120,20 @@ WHITENOISE_MANIFEST_STRICT = False
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# Explicit request/workbook limits protect the single-process service from
+# oversized bodies and highly compressed XLSX archive bombs.
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get("DJANGO_MAX_REQUEST_BYTES", 25 * 1024 * 1024))
+FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get("DJANGO_MAX_FILE_MEMORY_BYTES", 5 * 1024 * 1024))
+MAX_XLSX_UPLOAD_BYTES = int(
+    os.environ.get("DJANGO_MAX_XLSX_UPLOAD_BYTES", 20 * 1024 * 1024)
+)
+MAX_XLSX_UNCOMPRESSED_BYTES = int(
+    os.environ.get("DJANGO_MAX_XLSX_UNCOMPRESSED_BYTES", 100 * 1024 * 1024)
+)
+MAX_XLSX_ARCHIVE_ENTRIES = int(
+    os.environ.get("DJANGO_MAX_XLSX_ARCHIVE_ENTRIES", 10_000)
+)
+
 # Use one consistent presentation format throughout Django-rendered pages.
 # Database values remain proper date/datetime types.
 DATE_FORMAT = "m-d-Y"
@@ -123,6 +144,13 @@ SHORT_DATETIME_FORMAT = "m-d-Y"
 LOGIN_URL = "login"
 LOGIN_REDIRECT_URL = "home"
 LOGOUT_REDIRECT_URL = "login"
+
+# Sessions expire after eight hours without activity and when the browser is
+# closed. The custom middleware also rejects legacy sessions created under
+# Django's former two-week default.
+SESSION_COOKIE_AGE = int(os.environ.get("DJANGO_SESSION_COOKIE_AGE", str(8 * 60 * 60)))
+SESSION_EXPIRE_AT_BROWSER_CLOSE = env_bool("DJANGO_SESSION_EXPIRE_AT_BROWSER_CLOSE", True)
+SESSION_SAVE_EVERY_REQUEST = True
 
 # Password-reset email delivery. The console backend is safe for local
 # development: it prints the reset link in the server terminal. Set
@@ -142,6 +170,7 @@ DEFAULT_FROM_EMAIL = os.environ.get(
     "Inventory Web <no-reply@localhost>",
 )
 EMAIL_TIMEOUT = int(os.environ.get("DJANGO_EMAIL_TIMEOUT", "10"))
+APP_BASE_URL = os.environ.get("DJANGO_APP_BASE_URL", "http://localhost:8000")
 
 # Prompt-to-inventory assistant. The API key is server-side only and is never
 # exposed in HTML or JavaScript.

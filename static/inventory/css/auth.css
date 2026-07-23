@@ -14,9 +14,32 @@ input { border:1px solid #cbd8e8; border-radius:2px; background:var(--bd-white);
 input:focus { border-color:var(--bd-blue); outline:0; box-shadow:0 0 0 3px rgba(134,214,255,.38); }
 button { border-radius:0; background:var(--bd-navy); color:var(--bd-white); font-weight:700; }
 button:hover { background:var(--bd-orange); }
+.password-visibility-field { position:relative; width:100%; }
+.password-visibility-field > input { padding-right:48px; }
+button.password-visibility-toggle { align-items:center; background:transparent; border:0; color:var(--bd-navy); display:flex; height:100%; justify-content:center; margin:0; min-height:0; padding:0; position:absolute; right:0; top:0; width:44px; }
+button.password-visibility-toggle:hover { background:#eaf6fc; color:var(--bd-orange); }
+.password-visibility-toggle svg { fill:currentColor; height:21px; width:21px; }
+.password-visibility-toggle:focus-visible { outline:2px solid var(--bd-orange); outline-offset:-3px; }
 a { color:var(--bd-blue); font-weight:700; text-decoration-color:rgba(1,53,156,.35); text-underline-offset:3px; }
 a:hover { color:var(--bd-orange); }
 .errors, .errorlist { color:#b42318; }
 .errors { border-left:4px solid #b42318; border-radius:0; background:#fff1f0; }
 .password-checklist li.valid, .password-checklist li.valid::before { color:#087a55; }
 @media (max-width:520px) { .brand-lockup { margin:-24px -18px 24px; padding:22px 18px; } }
+.auth-status-page { align-items:center; display:flex; justify-content:center; margin:0; min-height:100vh; padding:24px; }
+.auth-status-card { box-sizing:border-box; overflow:hidden; padding:32px; text-align:center; width:min(100%, 460px); }
+.auth-status-card .brand-lockup { text-align:left; }
+.status-icon { align-items:center; background:#eaf6fc; border:1px solid #b7ddf1; border-radius:50%; display:flex; height:68px; justify-content:center; margin:2px auto 20px; width:68px; }
+.status-icon svg { fill:var(--bd-blue); height:34px; width:34px; }
+.auth-status-card h1 { margin:0 0 10px; }
+.auth-status-card .subtitle { font-size:17px; line-height:1.45; margin:0 auto 22px; max-width:350px; }
+.status-message { border-bottom:1px solid #dce5f2; border-top:1px solid #dce5f2; color:#344054; line-height:1.55; margin:0 0 24px; padding:18px 8px; }
+.status-message p { margin:0; }
+.status-message p + p { margin-top:8px; }
+.auth-primary-link { background:var(--bd-navy); box-sizing:border-box; color:var(--bd-white)!important; display:block; min-height:46px; padding:12px 18px; text-align:center; text-decoration:none; width:100%; }
+.auth-primary-link:hover { background:var(--bd-orange); }
+@media (max-width:520px) {
+  .auth-status-page { align-items:flex-start; padding:12px; }
+  .auth-status-card { padding:24px 18px; }
+  .auth-status-card h1 { font-size:25px; }
+}

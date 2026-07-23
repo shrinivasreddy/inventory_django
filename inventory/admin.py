@@ -1,16 +1,17 @@
 import io
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zipfile import BadZipFile
 
 from django.contrib import admin
 from django.contrib import messages
 from django.contrib.auth import get_user_model
+from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Max
 from django.http import HttpResponse
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
@@ -20,6 +21,8 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from .forms import ConfigurationExcelImportForm, InventoryExcelImportForm
+from .concurrency import section_write_locks
+from .excel_security import safe_excel_cell
 from .models import (
     AutoFillMapping,
     DropdownOption,
@@ -30,11 +33,155 @@ from .models import (
     TabRecord,
 )
 from .specs import TAB_ORDER, compute_auto_fields, get_section_state, get_spec, missing_required_fields
+from .signals import send_account_approved_email, send_account_deactivated_email
 
 admin.site.site_header = "Bluedome Inventory"
 admin.site.site_title = "Bluedome Inventory"
 admin.site.index_title = "Inventory Configuration"
 admin.site.site_url = "/"
+
+
+User = get_user_model()
+try:
+    admin.site.unregister(User)
+except admin.sites.NotRegistered:
+    pass
+
+
+@admin.register(User)
+class BluedomeUserAdmin(DjangoUserAdmin):
+    list_display = (
+        "username",
+        "email",
+        "first_name",
+        "last_name",
+        "approval_status",
+        "is_staff",
+        "date_joined",
+        "account_actions",
+    )
+    list_filter = ("is_active", "is_staff", "is_superuser", "date_joined")
+    actions = ("approve_selected_users", "deactivate_selected_users")
+
+    @admin.display(description="Account status", ordering="is_active")
+    def approval_status(self, obj):
+        return "Active" if obj.is_active else "Pending / inactive"
+
+    @admin.display(description="Actions")
+    def account_actions(self, obj):
+        if obj.is_active:
+            if obj.is_superuser:
+                return format_html('<span class="account-action-disabled">Protected</span>')
+            url = reverse("admin:auth_user_deactivate_account", args=[obj.pk])
+            return format_html(
+                '<a class="account-action account-action-deactivate" href="{}" '
+                'aria-label="Deactivate {}">Deactivate</a>',
+                url,
+                obj.username,
+            )
+        url = reverse("admin:auth_user_activate_account", args=[obj.pk])
+        return format_html(
+            '<a class="account-action account-action-activate" href="{}" '
+            'aria-label="Activate {}">Activate</a>',
+            url,
+            obj.username,
+        )
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                "<int:user_id>/activate-account/",
+                self.admin_site.admin_view(self.change_account_status),
+                {"activate": True},
+                name="auth_user_activate_account",
+            ),
+            path(
+                "<int:user_id>/deactivate-account/",
+                self.admin_site.admin_view(self.change_account_status),
+                {"activate": False},
+                name="auth_user_deactivate_account",
+            ),
+        ]
+        return custom_urls + urls
+
+    def change_account_status(self, request, user_id, activate):
+        if not self.has_change_permission(request):
+            raise PermissionDenied
+        user = get_object_or_404(User, pk=user_id)
+        if not activate and (user.is_superuser or user.pk == request.user.pk):
+            messages.error(request, "The current administrator or a superuser cannot be deactivated here.")
+            return redirect("admin:auth_user_changelist")
+        if request.method == "POST":
+            user._skip_approval_email = activate
+            user._skip_deactivation_email = not activate
+            user.is_active = activate
+            user.save(update_fields=["is_active"])
+            action = "activated" if activate else "deactivated"
+            messages.success(request, f'User "{user.username}" was {action}.')
+            delivery_function = (
+                send_account_approved_email if activate else send_account_deactivated_email
+            )
+            delivered, delivery_message = delivery_function(user.pk)
+            if delivered:
+                messages.success(request, delivery_message)
+            else:
+                messages.warning(request, delivery_message)
+            return redirect("admin:auth_user_changelist")
+        return render(
+            request,
+            "admin/auth/user/account_status_confirmation.html",
+            {
+                **self.admin_site.each_context(request),
+                "title": f'{"Activate" if activate else "Deactivate"} user',
+                "target_user": user,
+                "activate": activate,
+                "opts": self.model._meta,
+            },
+        )
+
+    @admin.action(description="Approve selected users and send activation email")
+    def approve_selected_users(self, request, queryset):
+        approved = 0
+        delivered = 0
+        failures = []
+        for user in queryset.filter(is_active=False):
+            user._skip_approval_email = True
+            user.is_active = True
+            user.save(update_fields=["is_active"])
+            approved += 1
+            was_delivered, delivery_message = send_account_approved_email(user.pk)
+            if was_delivered:
+                delivered += 1
+            else:
+                failures.append(f"{user.username}: {delivery_message}")
+        self.message_user(request, f"Approved {approved} user account(s).")
+        if delivered:
+            self.message_user(request, f"Sent {delivered} approval email(s).", level=messages.SUCCESS)
+        if failures:
+            self.message_user(request, "Email not delivered — " + "; ".join(failures), level=messages.WARNING)
+
+    @admin.action(description="Deactivate selected users")
+    def deactivate_selected_users(self, request, queryset):
+        eligible = queryset.filter(is_active=True, is_superuser=False).exclude(pk=request.user.pk)
+        deactivated = 0
+        delivered = 0
+        failures = []
+        for user in eligible:
+            user._skip_deactivation_email = True
+            user.is_active = False
+            user.save(update_fields=["is_active"])
+            deactivated += 1
+            was_delivered, delivery_message = send_account_deactivated_email(user.pk)
+            if was_delivered:
+                delivered += 1
+            else:
+                failures.append(f"{user.username}: {delivery_message}")
+        self.message_user(request, f"Deactivated {deactivated} user account(s).")
+        if delivered:
+            self.message_user(request, f"Sent {delivered} deactivation email(s).", level=messages.SUCCESS)
+        if failures:
+            self.message_user(request, "Email not delivered — " + "; ".join(failures), level=messages.WARNING)
 
 
 class RowActionsAdminMixin:
@@ -77,6 +224,9 @@ class ConfigurationExcelAdminMixin:
     excel_columns = ()
     excel_unique_fields = ()
     excel_json_fields = ()
+
+    def sync_related_import_rows(self, pending):
+        """Hook for models whose imported rows maintain related lookup data."""
 
     def get_urls(self):
         opts = self.model._meta
@@ -156,7 +306,7 @@ class ConfigurationExcelAdminMixin:
                         value = getattr(obj, field_name)
                     if field_name in self.excel_json_fields:
                         value = json.dumps(value, ensure_ascii=False, sort_keys=True)
-                    row.append(value)
+                    row.append(safe_excel_cell(value))
                 worksheet.append(row)
         return workbook
 
@@ -266,7 +416,12 @@ class ConfigurationExcelAdminMixin:
                             seen.add(unique_key)
                             obj = self.model(**data)
                             try:
-                                obj.full_clean()
+                                # Existing unique keys are valid during import: they are
+                                # updated atomically below. Field/FK validation still runs.
+                                obj.full_clean(
+                                    validate_unique=False,
+                                    validate_constraints=False,
+                                )
                             except ValidationError as exc:
                                 details = "; ".join(
                                     f"{field}: {', '.join(messages)}"
@@ -281,7 +436,32 @@ class ConfigurationExcelAdminMixin:
                     else:
                         try:
                             with transaction.atomic():
-                                self.model.objects.bulk_create(pending)
+                                created_count = 0
+                                updated_count = 0
+                                for obj in pending:
+                                    lookup = {
+                                        "section_id" if field == "section" else field: getattr(
+                                            obj,
+                                            "section_id" if field == "section" else field,
+                                        )
+                                        for field in self.excel_unique_fields
+                                    }
+                                    defaults = {
+                                        field.name: getattr(obj, field.name)
+                                        for field in self.model._meta.concrete_fields
+                                        if not field.primary_key
+                                        and field.name not in self.excel_unique_fields
+                                        and field.name != "section"
+                                    }
+                                    _saved, created = self.model.objects.update_or_create(
+                                        defaults=defaults,
+                                        **lookup,
+                                    )
+                                    if created:
+                                        created_count += 1
+                                    else:
+                                        updated_count += 1
+                                self.sync_related_import_rows(pending)
                         except IntegrityError:
                             form.add_error(
                                 None,
@@ -291,7 +471,9 @@ class ConfigurationExcelAdminMixin:
                         else:
                             messages.success(
                                 request,
-                                f"Successfully imported {len(pending)} {opts.verbose_name_plural}.",
+                                f"Successfully imported {len(pending)} "
+                                f"{opts.verbose_name_plural}: {created_count} created, "
+                                f"{updated_count} updated.",
                             )
                             return redirect(
                                 reverse(
@@ -370,6 +552,29 @@ class MutcdMappingAdmin(ConfigurationExcelAdminMixin, RowActionsAdminMixin, admi
     list_display = ("word_description", "mutcd_code", "classification", "section", "row_actions")
     list_filter = ("section", "classification")
     search_fields = ("word_description", "mutcd_code", "classification")
+
+    def sync_related_import_rows(self, pending):
+        """Keep MUTCD classification and one deterministic fallback in sync."""
+        related_by_code = {}
+        for mapping in pending:
+            if mapping.mutcd_code:
+                related_by_code.setdefault(
+                    (mapping.section_id, mapping.mutcd_code),
+                    (mapping.word_description, mapping.classification),
+                )
+
+        for (section_id, mutcd_code), (word_description, classification) in related_by_code.items():
+            MutcdFallback.objects.update_or_create(
+                section_id=section_id,
+                code=mutcd_code,
+                defaults={"word_description": word_description},
+            )
+            if classification:
+                MutcdClassification.objects.update_or_create(
+                    section_id=section_id,
+                    code=mutcd_code,
+                    defaults={"classification": classification},
+                )
 
 
 @admin.register(MutcdClassification)
@@ -452,10 +657,59 @@ class InventorySectionFilter(admin.SimpleListFilter):
         return queryset
 
 
+class InventoryDateAddedFilter(admin.ListFilter):
+    title = "Date added"
+    template = "admin/inventory/tabrecord/date_range_filter.html"
+
+    def __init__(self, request, params, model, model_admin):
+        super().__init__(request, params, model, model_admin)
+        self.date_from = params.pop("date_from", [""])[-1]
+        self.date_to = params.pop("date_to", [""])[-1]
+        self.other_parameters = [
+            (key, value)
+            for key, values in request.GET.lists()
+            if key not in {"date_from", "date_to", "p"}
+            for value in values
+        ]
+
+    def has_output(self):
+        return True
+
+    def expected_parameters(self):
+        return ["date_from", "date_to"]
+
+    def choices(self, changelist):
+        return ()
+
+    @staticmethod
+    def _parse(value):
+        try:
+            return datetime.strptime(value, "%m-%d-%Y").date()
+        except (TypeError, ValueError):
+            return None
+
+    def queryset(self, request, queryset):
+        start_date = self._parse(self.date_from)
+        end_date = self._parse(self.date_to)
+        if start_date:
+            start = timezone.make_aware(datetime.combine(start_date, datetime.min.time()))
+            queryset = queryset.filter(created_at__gte=start)
+        if end_date:
+            end = timezone.make_aware(
+                datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+            )
+            queryset = queryset.filter(created_at__lt=end)
+        return queryset
+
+
 @admin.register(TabRecord)
 class TabRecordAdmin(admin.ModelAdmin):
     list_display = ("record_id", "username", "tab", "date_added")
-    list_filter = (InventoryUsernameFilter, InventorySectionFilter)
+    list_filter = (
+        InventoryUsernameFilter,
+        InventorySectionFilter,
+        InventoryDateAddedFilter,
+    )
     search_fields = ("tab_record_id", "owner__username", "owner__email")
     ordering = ("tab", "tab_record_id")
     change_list_template = "admin/inventory/tabrecord/change_list.html"
@@ -597,23 +851,24 @@ class TabRecordAdmin(admin.ModelAdmin):
                         form.add_error(None, "The workbook does not contain any data rows.")
                     else:
                         try:
-                            with transaction.atomic():
-                                max_id = (
-                                    TabRecord.objects.filter(tab=section_key)
-                                    .aggregate(value=Max("tab_record_id"))["value"]
-                                    or 0
-                                )
-                                TabRecord.objects.bulk_create(
-                                    [
-                                        TabRecord(
-                                            tab=section_key,
-                                            tab_record_id=max_id + offset,
-                                            data=row,
-                                            owner=request.user,
-                                        )
-                                        for offset, row in enumerate(pending_rows, start=1)
-                                    ]
-                                )
+                            with section_write_locks[section_key]:
+                                with transaction.atomic():
+                                    max_id = (
+                                        TabRecord.objects.filter(tab=section_key)
+                                        .aggregate(value=Max("tab_record_id"))["value"]
+                                        or 0
+                                    )
+                                    TabRecord.objects.bulk_create(
+                                        [
+                                            TabRecord(
+                                                tab=section_key,
+                                                tab_record_id=max_id + offset,
+                                                data=row,
+                                                owner=request.user,
+                                            )
+                                            for offset, row in enumerate(pending_rows, start=1)
+                                        ]
+                                    )
                         except IntegrityError:
                             form.add_error(
                                 None,
@@ -671,7 +926,7 @@ class TabRecordAdmin(admin.ModelAdmin):
             self._style_sheet(ws, export_columns)
             for record in records:
                 row = record.as_row(include_owner=True)
-                ws.append([row.get(column, "") for column in export_columns])
+                ws.append([safe_excel_cell(row.get(column, "")) for column in export_columns])
             record_count += len(records)
         buffer = io.BytesIO()
         workbook.save(buffer)

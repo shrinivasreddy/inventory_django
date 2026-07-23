@@ -132,7 +132,7 @@ class TabRecord(models.Model):
     tab = models.CharField(max_length=20, db_index=True)
     tab_record_id = models.PositiveIntegerField()  # the per-tab sequential "ID" shown to users
     data = models.JSONField(default=dict)
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

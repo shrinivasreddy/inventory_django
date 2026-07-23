@@ -1,0 +1,25 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Approval pending | Blue Dome Inventory</title>
+  <link rel="stylesheet" href="{% static 'inventory/css/auth.css' %}">
+</head>
+<body class="auth-status-page">
+  <main class="card auth-status-card">
+    {% include "registration/_brand.html" %}
+    <div class="status-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 11h-2V7h2zm0 4h-2v-2h2z"/></svg>
+    </div>
+    <h1>Registration received</h1>
+    <p class="subtitle">Your account is pending administrator approval.</p>
+    <div class="status-message">
+      <p>An administrator will review your registration.</p>
+      <p>We’ll email you as soon as your account is active and ready to use.</p>
+    </div>
+    <a class="auth-primary-link" href="{% url 'login' %}">Return to login</a>
+  </main>
+</body>
+</html>

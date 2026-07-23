@@ -1,0 +1,37 @@
+{% extends "admin/base_site.html" %}
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+  <a href="{% url 'admin:index' %}">Home</a>
+  &rsaquo; <a href="{% url 'admin:auth_user_changelist' %}">Users</a>
+  &rsaquo; {{ title }}
+</div>
+{% endblock %}
+{% block content %}
+<section class="confirmation-card">
+  <div class="confirmation-icon {% if activate %}confirmation-icon-success{% else %}confirmation-icon-danger{% endif %}" aria-hidden="true">
+    {% if activate %}
+      <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm-1.2 14.2-4-4 1.4-1.4 2.6 2.6 5-5 1.4 1.4z"/></svg>
+    {% else %}
+      <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm4 13-1 1-3-3-3 3-1-1 3-3-3-3 1-1 3 3 3-3 1 1-3 3z"/></svg>
+    {% endif %}
+  </div>
+  <h1>{{ title }}?</h1>
+  {% if activate %}
+    <p class="confirmation-lead">This account will gain access to Blue Dome Inventory. An approval email will be sent after activation.</p>
+  {% else %}
+    <p class="confirmation-lead">This account will immediately lose access to Blue Dome Inventory, including any active session.</p>
+  {% endif %}
+  <dl class="account-confirmation-summary">
+    <div><dt>Username</dt><dd>{{ target_user.username }}</dd></div>
+    <div><dt>Email</dt><dd>{{ target_user.email|default:"Not provided" }}</dd></div>
+    <div><dt>Current status</dt><dd><span class="account-status-pill {% if target_user.is_active %}is-active{% else %}is-inactive{% endif %}">{% if target_user.is_active %}Active{% else %}Pending / inactive{% endif %}</span></dd></div>
+  </dl>
+  <form method="post" class="confirmation-actions">
+    {% csrf_token %}
+    <button type="submit" class="button {% if activate %}button-primary{% else %}button-danger{% endif %}">
+      {% if activate %}Activate user{% else %}Deactivate user{% endif %}
+    </button>
+    <a class="button button-secondary" href="{% url 'admin:auth_user_changelist' %}">Cancel</a>
+  </form>
+</section>
+{% endblock %}

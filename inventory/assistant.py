@@ -1,6 +1,7 @@
 """Server-side OpenAI integration for prompt-to-inventory previews."""
 
 import json
+import os
 import uuid
 import urllib.error
 import urllib.request
@@ -20,6 +21,8 @@ def transcribe_audio(audio_bytes, filename, content_type):
             "Voice transcription is not configured. Set OPENAI_API_KEY in the server .env file."
         )
     boundary = f"----InventoryAssistant{uuid.uuid4().hex}"
+    safe_filename = os.path.basename(filename or "inventory-voice.webm")
+    safe_filename = safe_filename.replace('"', "").replace("\r", "").replace("\n", "")
     fields = [
         (
             "model",
@@ -30,7 +33,7 @@ def transcribe_audio(audio_bytes, filename, content_type):
         (
             "file",
             audio_bytes,
-            filename or "inventory-voice.webm",
+            safe_filename or "inventory-voice.webm",
             content_type or "audio/webm",
         ),
     ]
