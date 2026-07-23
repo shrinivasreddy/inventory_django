@@ -11,9 +11,9 @@
   "COMMENT",
   "MATERIAL",
   "ON_ROADWAY",
-  "IMAGE_LINK",
   "ROADWAY_DIRECTION",
   "INSP_DATE",
   "PM_UID",
-  "PM_ID"
+  "PM_ID",
+  "IMAGE_LINK"
 ]

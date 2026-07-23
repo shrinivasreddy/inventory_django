@@ -1,5 +1,7 @@
 """Database-backed inventory section specifications and business logic."""
 
+from copy import deepcopy
+
 from .models import (
     AutoFillMapping,
     DropdownOption,
@@ -13,12 +15,27 @@ TAB_ORDER = ["sign", "pavement", "lane", "curb"]
 
 
 def get_spec(key):
-    return InventorySection.objects.get(key=key).configuration
+    config = deepcopy(InventorySection.objects.get(key=key).configuration)
+    # IMAGE_LINK is a platform field, not optional administrator configuration.
+    # Keep older/restored databases compatible even if their saved section JSON
+    # predates the image-upload migration.
+    columns = config.setdefault("columns", [])
+    config["columns"] = [field for field in columns if field != "IMAGE_LINK"] + ["IMAGE_LINK"]
+    config["text_fields"] = [
+        field for field in config.setdefault("text_fields", []) if field != "IMAGE_LINK"
+    ]
+    auto_fields = config.setdefault("auto_fields", [])
+    if "IMAGE_LINK" not in auto_fields:
+        auto_fields.append("IMAGE_LINK")
+    wide_cols = config.setdefault("wide_cols", [])
+    if "IMAGE_LINK" not in wide_cols:
+        wide_cols.append("IMAGE_LINK")
+    return config
 
 
 def get_all_specs():
     sections = InventorySection.objects.in_bulk(TAB_ORDER, field_name="key")
-    return {key: sections[key].configuration for key in TAB_ORDER if key in sections}
+    return {key: get_spec(key) for key in TAB_ORDER if key in sections}
 
 
 def get_section_state(key):

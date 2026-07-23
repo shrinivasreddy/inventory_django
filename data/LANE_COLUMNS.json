@@ -14,7 +14,7 @@
   "COMMENT",
   "MATERIAL",
   "ON_ROADWAY",
-  "IMAGE_LINK",
   "LANE_UID",
-  "LM_ID"
+  "LM_ID",
+  "IMAGE_LINK"
 ]

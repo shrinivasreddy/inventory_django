@@ -39,12 +39,12 @@ def _normalized_image(upload):
         with Image.open(io.BytesIO(raw)) as probe:
             probe.verify()
         with Image.open(io.BytesIO(raw)) as source:
-            source.load()
             image_format = (source.format or "").upper()
             if image_format not in IMAGE_FORMATS:
                 raise InventoryImageError("Upload a JPEG, PNG, or WebP image.")
             if source.width * source.height > settings.MAX_INVENTORY_IMAGE_PIXELS:
                 raise InventoryImageError("Image dimensions are too large.")
+            source.load()
             extension, content_type = IMAGE_FORMATS[image_format]
             image = source.copy()
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError):

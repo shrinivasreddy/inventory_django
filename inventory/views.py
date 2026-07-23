@@ -1,6 +1,7 @@
 import io
 import hashlib
 import json
+import logging
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
@@ -8,6 +9,7 @@ from functools import wraps
 from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.password_validation import get_default_password_validators
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.http import FileResponse, JsonResponse, HttpResponseNotAllowed, HttpResponse
@@ -42,6 +44,8 @@ from .specs import (
     get_spec,
     missing_required_fields,
 )
+
+logger = logging.getLogger(__name__)
 
 def invalid_date_fields(spec, row):
     """Return date fields that are not valid MM-DD-YYYY calendar dates."""
@@ -250,6 +254,7 @@ def api_spec(request, key):
         "text_fields": spec["text_fields"],
         "auto_fields": spec["auto_fields"],
         "image_field": "IMAGE_LINK",
+        "max_image_upload_bytes": settings.MAX_INVENTORY_IMAGE_BYTES,
         "date_fields": spec["date_fields"],
         "uid_field": spec["uid_field"],
         "uid_prefix": spec["uid_prefix"],
@@ -413,27 +418,41 @@ def api_record_detail(request, key, rec_id):
 def api_record_image(request, key, rec_id):
     if key not in TAB_ORDER:
         return JsonResponse({"error": "Unknown tab"}, status=404)
-    try:
-        rec = visible_tab_records(request, key).get(tab_record_id=rec_id)
-    except TabRecord.DoesNotExist:
-        return JsonResponse({"error": "Record not found"}, status=404)
     upload = request.FILES.get("image")
     if upload is None:
         return JsonResponse({"error": "Choose an image to upload."}, status=400)
-    try:
-        filename, _ = save_record_image(key, rec_id, upload)
-    except InventoryImageError as exc:
-        return JsonResponse({"error": str(exc)}, status=400)
-    except OSError:
-        return JsonResponse({"error": "The image could not be saved on the server."}, status=500)
+    with locks[key]:
+        try:
+            rec = visible_tab_records(request, key).get(tab_record_id=rec_id)
+        except TabRecord.DoesNotExist:
+            return JsonResponse({"error": "Record not found"}, status=404)
+        try:
+            filename, _ = save_record_image(key, rec_id, upload)
+        except InventoryImageError as exc:
+            logger.warning(
+                "Inventory image rejected: section=%s record=%s user=%s name=%r size=%s type=%r reason=%s",
+                key, rec_id, request.user.pk, upload.name, upload.size,
+                upload.content_type, exc,
+            )
+            return JsonResponse({"error": str(exc)}, status=400)
+        except OSError:
+            logger.exception(
+                "Inventory image storage failed: section=%s record=%s user=%s",
+                key, rec_id, request.user.pk,
+            )
+            return JsonResponse({"error": "The image could not be saved on the server."}, status=500)
 
-    folder = next(folder for folder, section in FOLDER_SECTIONS.items() if section == key)
-    image_path = f"/uploads/images/{folder}/{rec_id}/{filename}"
-    image_url = request.build_absolute_uri(image_path)
-    data = dict(rec.data)
-    data["IMAGE_LINK"] = image_url
-    rec.data = data
-    rec.save(update_fields=["data", "updated_at"])
+        folder = next(folder for folder, section in FOLDER_SECTIONS.items() if section == key)
+        image_path = f"/uploads/images/{folder}/{rec_id}/{filename}"
+        # Use the hostname/IP through which this user reached the application.
+        # ALLOWED_HOSTS already validates the Host header, and this avoids
+        # persisting an unusable deployment placeholder such as
+        # "your-server-address" or "localhost" for remote users.
+        image_url = request.build_absolute_uri(image_path)
+        data = dict(rec.data)
+        data["IMAGE_LINK"] = image_url
+        rec.data = data
+        rec.save(update_fields=["data", "updated_at"])
     return JsonResponse({"record": rec.as_row()})
 
 

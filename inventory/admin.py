@@ -829,7 +829,7 @@ class TabRecordAdmin(admin.ModelAdmin):
                             supplied = {
                                 header: self._excel_value(values[index] if index < len(values) else "")
                                 for index, header in enumerate(headers)
-                                if header and header != "ID"
+                                if header and header not in {"ID", "IMAGE_LINK"}
                             }
                             row = {
                                 column: supplied.get(column, "")
@@ -837,6 +837,7 @@ class TabRecordAdmin(admin.ModelAdmin):
                                 if column != "ID"
                             }
                             row = compute_auto_fields(section_key, row, state)
+                            row["IMAGE_LINK"] = ""
                             missing = missing_required_fields(section_key, row)
                             if missing:
                                 errors.append(

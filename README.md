@@ -142,7 +142,9 @@ Same guidance as the Flask version, same reasoning:
   ORM code doesn't care which database engine is underneath).
 - Back up `db.sqlite3` the way you'd back up any database -- it now holds
   everything `store/*.json` used to hold in the Flask version.
-- Set the reverse proxy request-body limit to 25 MB or less. Application-level
+- Set the reverse proxy request-body limit to **25 MB** so a 20 MB image plus
+  multipart form overhead is accepted. For Nginx use `client_max_body_size 25M;`.
+  For IIS set `requestLimits maxAllowedContentLength="26214400"`. Application-level
   limits and compressed/uncompressed Excel limits are configurable in `.env`.
 - Run `python manage.py migrate`, `python manage.py collectstatic --noinput`,
   `python manage.py check --deploy`, and the full test suite before each release.

@@ -105,8 +105,19 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 # Uploaded inventory images are application data and are served through an
 # authenticated view, not by WhiteNoise.
-INVENTORY_UPLOAD_ROOT = Path(os.environ.get("DJANGO_INVENTORY_UPLOAD_ROOT", BASE_DIR / "uploads"))
-MAX_INVENTORY_IMAGE_BYTES = int(os.environ.get("DJANGO_MAX_INVENTORY_IMAGE_BYTES", str(10 * 1024 * 1024)))
+_inventory_upload_root = Path(os.environ.get("DJANGO_INVENTORY_UPLOAD_ROOT", "uploads"))
+INVENTORY_UPLOAD_ROOT = (
+    _inventory_upload_root
+    if _inventory_upload_root.is_absolute()
+    else BASE_DIR / _inventory_upload_root
+)
+_configured_image_limit = int(
+    os.environ.get("DJANGO_MAX_INVENTORY_IMAGE_BYTES", str(20 * 1024 * 1024))
+)
+# Twenty MB is the product requirement and therefore the minimum effective
+# value. This also neutralizes stale Windows service environment overrides
+# that still contain the former 10 MB value.
+MAX_INVENTORY_IMAGE_BYTES = max(20 * 1024 * 1024, _configured_image_limit)
 MAX_INVENTORY_IMAGE_PIXELS = int(os.environ.get("DJANGO_MAX_INVENTORY_IMAGE_PIXELS", "25000000"))
 # Serves static files (admin CSS/JS) directly from the WSGI process via
 # whitenoise, so the app is self-contained under waitress with no separate

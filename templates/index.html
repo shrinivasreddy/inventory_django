@@ -80,6 +80,29 @@
     background: #0b1220; border: 1px dashed #475569; border-radius: 6px; color: #4ade80;
     padding: 8px; font-size: 13px; font-weight: bold; min-height: 34px; display: flex; align-items: center;
   }
+  .image-upload-box { border: 1px solid #334155; border-radius: 6px; padding: 10px; background: #0b1220; }
+  #inventory-image-upload { margin: 12px 0; }
+  #inventory-image-label {
+    display: block; margin-bottom: 8px; color: #9ca3af; font-size: 11px;
+    font-weight: 800; text-transform: uppercase;
+  }
+  .image-upload-input { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+  .image-browse-row { display: flex; align-items: center; gap: 9px; }
+  .image-browse-button {
+    display: inline-flex; align-items: center; justify-content: center; min-height: 38px;
+    padding: 8px 14px; border: 1px solid #4ade80; border-radius: 6px;
+    background: #4ade80; color: #0f172a; font-size: 12px; font-weight: 800; cursor: pointer;
+  }
+  .image-browse-button:hover { background: #22c55e; border-color: #22c55e; }
+  .image-file-name { min-width: 0; color: #cbd5e1; font-size: 12px; overflow-wrap: anywhere; }
+  .image-current-link { display: inline-block; margin-bottom: 8px; color: #4ade80; font-weight: 700; }
+  .image-upload-help { color: #94a3b8; font-size: 11px; margin-top: 7px; }
+  .image-upload-status { margin-top: 7px; color: #fca5a5; font-size: 12px; font-weight: 700; }
+  .image-preview {
+    display: block; width: 100%; max-height: 220px; object-fit: contain;
+    margin: 0 0 10px; border: 1px solid #334155; border-radius: 6px; background: #020617;
+  }
+  .record-image-link { color: #2563eb; font-weight: 700; white-space: nowrap; }
   .hidden { display: none !important; }
 
   #form-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
@@ -219,6 +242,18 @@
       <button id="form-width-reset" type="button" title="Restore the default form width">Reset width</button>
     </div>
     <div id="form-grid"></div>
+    <section id="inventory-image-upload" class="image-upload-box" aria-labelledby="inventory-image-label">
+      <label id="inventory-image-label">Image link</label>
+      <a id="image-current-link" class="image-current-link hidden" target="_blank" rel="noopener noreferrer">View current image</a>
+      <img id="image-preview" class="image-preview hidden" alt="Selected inventory image preview">
+      <input id="field_IMAGE_LINK" class="image-upload-input" type="file" accept="image/jpeg,image/png,image/webp">
+      <div class="image-browse-row">
+        <label class="image-browse-button" for="field_IMAGE_LINK">Browse image</label>
+        <span id="image-file-name" class="image-file-name">No image selected</span>
+      </div>
+      <div class="image-upload-help">JPEG, PNG, or WebP. Maximum 20 MB. A new upload replaces the current image.</div>
+      <div id="image-upload-status" class="image-upload-status" role="status"></div>
+    </section>
     <div id="form-actions">
       <button id="add-btn">Add Record</button>
       <button id="update-btn" disabled>Update</button>
@@ -312,6 +347,30 @@ var fieldEls = {};
 var autoEls = {};
 var datePickerEls = {};
 var tabDrafts = {};
+var imageFileInput = document.getElementById('field_IMAGE_LINK');
+var imageLinkAnchor = document.getElementById('image-current-link');
+var imagePreview = document.getElementById('image-preview');
+var imagePreviewObjectUrl = null;
+var pendingImageFile = null;
+var imageFileName = document.getElementById('image-file-name');
+var imageUploadStatus = document.getElementById('image-upload-status');
+var MAX_IMAGE_UPLOAD_BYTES = 20 * 1024 * 1024;
+
+imageFileInput.addEventListener('change', function () {
+  imageUploadStatus.textContent = '';
+  pendingImageFile = imageFileInput.files && imageFileInput.files[0]
+    ? imageFileInput.files[0] : null;
+  if (pendingImageFile && pendingImageFile.size > MAX_IMAGE_UPLOAD_BYTES) {
+    imageUploadStatus.textContent = 'Image must be 20 MB or smaller.';
+    pendingImageFile = null;
+    imageFileInput.value = '';
+    imageFileName.textContent = 'No image selected';
+    showImagePreview('', false);
+    return;
+  }
+  imageFileName.textContent = pendingImageFile ? pendingImageFile.name : 'No image selected';
+  showImagePreview(pendingImageFile ? URL.createObjectURL(pendingImageFile) : '', true);
+});
 
 function el(tag, attrs, children) {
   var e = document.createElement(tag);
@@ -389,6 +448,7 @@ function buildTabBar() {
 
 function switchTab(key) {
   saveCurrentDraft();
+  pendingImageFile = null;
   currentTabKey = key;
   editingId = null;
   buildTabBar();
@@ -416,6 +476,7 @@ function buildForm() {
   datePickerEls = {};
 
   spec.columns.forEach(function (col, fieldIndex) {
+    if (col === 'IMAGE_LINK') return;
     var wrap = el('div', { class: 'field-wrap' + (spec.wide_cols.includes(col) ? ' wide' : '') });
     wrap.style.setProperty('--field-delay', Math.min(fieldIndex * 22, 220) + 'ms');
     wrap.appendChild(el('label', { text: col.replace(/_/g, ' ') }));
@@ -540,8 +601,10 @@ function saveCurrentDraft() {
     values[col] = getVal(col);
     if (values[col] !== '') hasValue = true;
   });
-  if (hasValue || editingId !== null) {
-    tabDrafts[currentTabKey] = { values: values, editingId: editingId };
+  if (hasValue || editingId !== null || pendingImageFile) {
+    tabDrafts[currentTabKey] = {
+      values: values, editingId: editingId, imageFile: pendingImageFile
+    };
   } else {
     delete tabDrafts[currentTabKey];
   }
@@ -550,6 +613,7 @@ function saveCurrentDraft() {
 function restoreCurrentDraft() {
   var draft = tabDrafts[currentTabKey];
   if (!draft) {
+    pendingImageFile = null;
     editingId = null;
     document.getElementById('update-btn').disabled = true;
     document.getElementById('delete-btn').disabled = true;
@@ -558,6 +622,11 @@ function restoreCurrentDraft() {
   Object.keys(draft.values).forEach(function (col) {
     if (fieldEls[col]) setVal(col, draft.values[col]);
   });
+  pendingImageFile = draft.imageFile || null;
+  if (pendingImageFile) {
+    if (imageFileName) imageFileName.textContent = pendingImageFile.name;
+    showImagePreview(URL.createObjectURL(pendingImageFile), true);
+  }
   if (spec.mutcd_word_options) updateWordDescriptionChoices(getVal('MUTCD'));
   editingId = draft.editingId;
   var isEditing = editingId !== null;
@@ -770,16 +839,83 @@ function collectRow() {
 
 function setStatus(msg) { document.getElementById('status').textContent = msg; }
 
+function showImagePreview(url, isObjectUrl) {
+  if (imagePreviewObjectUrl) {
+    URL.revokeObjectURL(imagePreviewObjectUrl);
+    imagePreviewObjectUrl = null;
+  }
+  if (!imagePreview) return;
+  if (!url) {
+    imagePreview.removeAttribute('src');
+    imagePreview.classList.add('hidden');
+    return;
+  }
+  if (isObjectUrl) imagePreviewObjectUrl = url;
+  imagePreview.src = url;
+  imagePreview.classList.remove('hidden');
+}
+
+function accessibleImageUrl(storedUrl) {
+  if (!storedUrl) return '';
+  try {
+    var parsed = new URL(storedUrl, window.location.origin);
+    if (parsed.pathname.indexOf('/uploads/images/') === 0) {
+      return parsed.pathname + parsed.search;
+    }
+  } catch (error) {
+    return '';
+  }
+  return '';
+}
+
+function uploadRecordImage(record) {
+  if (!pendingImageFile) {
+    return Promise.resolve(record);
+  }
+  var formData = new FormData();
+  formData.append('image', pendingImageFile);
+  imageUploadStatus.textContent = 'Uploading image...';
+  return fetch('/api/' + currentTabKey + '/records/' + record.ID + '/image', {
+    method: 'POST', headers: { 'X-CSRFToken': csrfToken }, body: formData
+  }).then(parseApiResponse).then(function (res) {
+    if (!res.ok) {
+      imageUploadStatus.textContent = res.data.error || 'Image upload failed.';
+      throw new Error(imageUploadStatus.textContent);
+    }
+    imageUploadStatus.textContent = 'Image uploaded successfully.';
+    return res.data.record;
+  });
+}
+
+function replaceLocalRecord(record) {
+  var idx = allRecords.findIndex(function (r) { return r.ID === record.ID; });
+  if (idx === -1) allRecords.push(record); else allRecords[idx] = record;
+  renderTable();
+}
+
 document.getElementById('add-btn').addEventListener('click', function () {
   apiRequest('/api/' + currentTabKey + '/records', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ row: collectRow() })
   }).then(function (res) {
       if (!res.ok) { setStatus(res.data.error); return; }
-      allRecords.push(res.data.record);
       nextIdPreview = res.data.next_id;
-      renderTable();
-      setStatus('Record ' + res.data.record.ID + ' added.');
-      clearForm(false);
+      var savedRecord = res.data.record;
+      return uploadRecordImage(savedRecord).then(function (finalRecord) {
+        replaceLocalRecord(finalRecord);
+        setStatus('Record ' + finalRecord.ID + ' added.');
+        clearForm(false);
+      }).catch(function (err) {
+        // Creating the data row and storing its required image is one logical
+        // operation. Compensate for a failed image upload by removing the new
+        // row, so users never receive a partially saved record.
+        return apiRequest('/api/' + currentTabKey + '/records/' + savedRecord.ID, {
+          method: 'DELETE'
+        }).then(function () {
+          allRecords = allRecords.filter(function (r) { return r.ID !== savedRecord.ID; });
+          renderTable();
+          setStatus('Record was not saved because the image failed: ' + err.message);
+        });
+      });
     }).catch(function (err) { setStatus(err.message); });
 });
 
@@ -789,12 +925,17 @@ document.getElementById('update-btn').addEventListener('click', function () {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ row: collectRow() })
   }).then(function (res) {
       if (!res.ok) { setStatus(res.data.error); return; }
-      var idx = allRecords.findIndex(function (r) { return r.ID === editingId; });
-      if (idx !== -1) allRecords[idx] = res.data.record;
-      renderTable();
-      setStatus('Record ' + res.data.record.ID + ' updated.');
-      editingId = null;
-      clearForm(false);
+      var savedRecord = res.data.record;
+      return uploadRecordImage(savedRecord).then(function (finalRecord) {
+        replaceLocalRecord(finalRecord);
+        setStatus('Record ' + finalRecord.ID + ' updated.');
+        editingId = null;
+        clearForm(false);
+      }).catch(function (err) {
+        replaceLocalRecord(savedRecord);
+        loadRecord(savedRecord);
+        setStatus('Record data was updated, but the image failed: ' + err.message);
+      });
     }).catch(function (err) { setStatus(err.message); });
 });
 
@@ -830,6 +971,15 @@ function clearForm(keepSticky) {
   });
   applyDefaultFieldValues();
   if (keepSticky) { for (var f in sticky) setVal(f, sticky[f]); }
+  if (imageFileInput) imageFileInput.value = '';
+  pendingImageFile = null;
+  if (imageFileName) imageFileName.textContent = 'No image selected';
+  if (imageUploadStatus) imageUploadStatus.textContent = '';
+  showImagePreview('', false);
+  if (imageLinkAnchor) {
+    imageLinkAnchor.removeAttribute('href');
+    imageLinkAnchor.classList.add('hidden');
+  }
 
   editingId = null;
   delete tabDrafts[currentTabKey];
@@ -849,6 +999,21 @@ function loadRecord(record) {
     var val = record[col] || '';
     setVal(col, spec.date_fields.includes(col) ? storedToIso(val) : val);
   });
+  if (imageFileInput) imageFileInput.value = '';
+  pendingImageFile = null;
+  if (imageFileName) imageFileName.textContent = 'No replacement selected';
+  if (imageLinkAnchor) {
+    var imageUrl = accessibleImageUrl(record.IMAGE_LINK || '');
+    if (imageUrl) {
+      imageLinkAnchor.href = imageUrl;
+      imageLinkAnchor.classList.remove('hidden');
+      showImagePreview(imageUrl, false);
+    } else {
+      imageLinkAnchor.removeAttribute('href');
+      imageLinkAnchor.classList.add('hidden');
+      showImagePreview('', false);
+    }
+  }
   if (spec.mutcd_word_options) updateWordDescriptionChoices(getVal('MUTCD'));
   editingId = record.ID;
   refreshAutoFields();
@@ -890,7 +1055,21 @@ function renderTable() {
   filtered.forEach(function (rec) {
     var tr = el('tr', { 'data-id': rec.ID });
     if (rec.ID === editingId) tr.classList.add('selected');
-    spec.columns.forEach(function (col) { tr.appendChild(el('td', { text: rec[col] != null ? rec[col] : '' })); });
+    spec.columns.forEach(function (col) {
+      var td = el('td');
+      if (col === 'IMAGE_LINK' && rec[col]) {
+        var accessibleUrl = accessibleImageUrl(rec[col]);
+        var link = el('a', {
+          class: 'record-image-link', href: accessibleUrl, target: '_blank',
+          rel: 'noopener noreferrer', text: 'View image'
+        });
+        link.addEventListener('click', function (event) { event.stopPropagation(); });
+        td.appendChild(link);
+      } else {
+        td.textContent = rec[col] != null ? rec[col] : '';
+      }
+      tr.appendChild(td);
+    });
     tr.addEventListener('click', function () {
       document.querySelectorAll('#table-body tr').forEach(function (r) { r.classList.remove('selected'); });
       tr.classList.add('selected');

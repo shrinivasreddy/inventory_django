@@ -2,6 +2,8 @@ from datetime import datetime, timedelta
 import io
 import json
 import re
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 from django.conf import settings
@@ -12,6 +14,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 from django.utils import timezone
 from openpyxl import Workbook, load_workbook
+from PIL import Image
 
 from .middleware import LAST_ACTIVITY_KEY
 from .models import (
@@ -22,6 +25,84 @@ from .models import (
     MutcdMapping,
     TabRecord,
 )
+
+
+class InventoryImageTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("image-owner", password="StrongPass!234")
+        self.other = User.objects.create_user("other-user", password="StrongPass!234")
+        self.record = TabRecord.objects.create(
+            owner=self.user, tab="sign", tab_record_id=1, data={"IMAGE_LINK": ""}
+        )
+
+    @staticmethod
+    def image_upload(image_format, color):
+        stream = io.BytesIO()
+        Image.new("RGB", (12, 8), color).save(stream, format=image_format)
+        extension = "jpg" if image_format == "JPEG" else image_format.lower()
+        return SimpleUploadedFile(
+            f"test.{extension}", stream.getvalue(), content_type=f"image/{extension}"
+        )
+
+    def test_upload_sets_full_url_and_reupload_replaces_existing_image(self):
+        with tempfile.TemporaryDirectory() as temporary_root, override_settings(
+            INVENTORY_UPLOAD_ROOT=Path(temporary_root), APP_BASE_URL="http://testserver"
+        ):
+            self.client.force_login(self.user)
+            url = reverse("api_record_image", args=["sign", 1])
+            first = self.client.post(url, {"image": self.image_upload("JPEG", "red")})
+            self.assertEqual(first.status_code, 200)
+            first_link = first.json()["record"]["IMAGE_LINK"]
+            self.assertTrue(first_link.startswith("http://testserver/uploads/images/sign_inventory/1/"))
+            directory = Path(temporary_root) / "images" / "sign_inventory" / "1"
+            self.assertEqual([path.name for path in directory.iterdir()], ["image.jpg"])
+
+            second = self.client.post(url, {"image": self.image_upload("PNG", "blue")})
+            self.assertEqual(second.status_code, 200)
+            self.assertEqual([path.name for path in directory.iterdir()], ["image.png"])
+            self.record.refresh_from_db()
+            self.assertTrue(self.record.data["IMAGE_LINK"].endswith("/image.png"))
+            view = self.client.get(self.record.data["IMAGE_LINK"])
+            self.assertEqual(view.status_code, 200)
+            self.assertEqual(view["Content-Type"], "image/png")
+            view.close()
+
+            self.client.force_login(self.other)
+            self.assertEqual(self.client.get(self.record.data["IMAGE_LINK"]).status_code, 404)
+            self.assertEqual(
+                self.client.post(url, {"image": self.image_upload("PNG", "green")}).status_code,
+                404,
+            )
+
+    def test_rejects_non_image_upload(self):
+        with tempfile.TemporaryDirectory() as temporary_root, override_settings(
+            INVENTORY_UPLOAD_ROOT=Path(temporary_root)
+        ):
+            self.client.force_login(self.user)
+            response = self.client.post(
+                reverse("api_record_image", args=["sign", 1]),
+                {"image": SimpleUploadedFile("fake.png", b"not an image", "image/png")},
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("valid image", response.json()["error"])
+
+    def test_all_inventory_specs_and_form_template_expose_image_upload(self):
+        self.assertEqual(settings.MAX_INVENTORY_IMAGE_BYTES, 20 * 1024 * 1024)
+        self.assertGreater(settings.DATA_UPLOAD_MAX_MEMORY_SIZE, settings.MAX_INVENTORY_IMAGE_BYTES)
+        self.client.force_login(self.user)
+        for section in ("sign", "pavement", "lane", "curb"):
+            response = self.client.get(reverse("api_spec", args=[section]))
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertIn("IMAGE_LINK", payload["columns"])
+            self.assertEqual(payload["columns"][-1], "IMAGE_LINK")
+            self.assertEqual(payload["image_field"], "IMAGE_LINK")
+        home = self.client.get(reverse("home"))
+        self.assertContains(home, "Browse image")
+        self.assertContains(home, "image-upload-input")
+        self.assertContains(home, "MAX_IMAGE_UPLOAD_BYTES = 20 * 1024 * 1024")
+        self.assertContains(home, "accessibleImageUrl")
+        self.assertIn("img-src 'self' data: blob:", home["Content-Security-Policy"])
 
 
 class AuthenticationTests(TestCase):
