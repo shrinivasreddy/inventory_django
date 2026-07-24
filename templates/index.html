@@ -2,6 +2,7 @@
 <!DOCTYPE html>
 <html>
 <head>
+{% include "includes/favicons.html" %}
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Blue Dome Inventory</title>
@@ -229,12 +230,29 @@
         <svg viewBox="0 0 24 24"><path d="M4 4h7v7H4V4zm9 0h7v7h-7V4zM4 13h7v7H4v-7zm9 0h7v7h-7v-7z"/></svg>
       </span>
       <label for="project-selector"><small>Current project</small><span class="sr-only">Choose current project</span></label>
-      <select id="project-selector" aria-label="Current project">
+      <select id="project-selector" class="project-selector-native" aria-label="Current project" tabindex="-1">
         {% for project in projects %}
           <option value="{{ project.pk }}"{% if project.pk == selected_project.pk %} selected{% endif %}>{{ project.name }}</option>
         {% endfor %}
       </select>
+      <button id="project-menu-trigger" class="project-menu-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="project-menu">
+        <span id="project-menu-value">{{ selected_project.name }}</span>
+      </button>
       <span class="project-switcher__chevron" aria-hidden="true"></span>
+      <div id="project-menu" class="project-menu" hidden>
+        <div class="project-menu__search-wrap">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 3a6.5 6.5 0 1 0 3.98 11.64L19.85 21 21 19.85l-6.36-6.37A6.5 6.5 0 0 0 9.5 3zm0 2a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9z"/></svg>
+          <input id="project-menu-search" type="search" placeholder="Search projects..." autocomplete="off" aria-label="Search projects">
+        </div>
+        <div id="project-menu-options" class="project-menu__options" role="listbox" aria-label="Available projects">
+          {% for project in projects %}
+            <button type="button" role="option" class="project-menu__option{% if project.pk == selected_project.pk %} is-selected{% endif %}" data-project-id="{{ project.pk }}" data-project-name="{{ project.name }}" aria-selected="{% if project.pk == selected_project.pk %}true{% else %}false{% endif %}">
+              <span class="project-menu__option-avatar" aria-hidden="true">{{ project.name|slice:":1"|upper }}</span><span>{{ project.name }}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 16.17-3.88-3.88L3.7 13.7 9 19 20.3 7.7l-1.42-1.42L9 16.17z"/></svg>
+            </button>
+          {% endfor %}
+        </div>
+        <p id="project-menu-empty" class="project-menu__empty" hidden>No matching projects</p>
+      </div>
     </div>
     {% if request.user.is_staff %}
       <a id="admin-link" href="{% url 'admin:index' %}">Admin Configuration</a>
@@ -263,7 +281,7 @@
     <section id="inventory-image-upload" class="image-upload-box" aria-labelledby="inventory-image-label">
       <label id="inventory-image-label">Image link</label>
       <a id="image-current-link" class="image-current-link hidden" target="_blank" rel="noopener noreferrer">View current image</a>
-      <img id="image-preview" class="image-preview hidden" alt="Selected inventory image preview">
+      <img id="image-preview" class="image-preview hidden" alt="Selected inventory image preview" role="button" tabindex="0" aria-label="Open enlarged image viewer">
       <input id="field_IMAGE_LINK" class="image-upload-input" type="file" accept="image/jpeg,image/png,image/webp">
       <div class="image-browse-row">
         <label class="image-browse-button" for="field_IMAGE_LINK">Browse image</label>
@@ -274,8 +292,9 @@
     </section>
     <div id="form-actions">
       <button id="add-btn">Add Record</button>
-      <button id="update-btn" disabled>Update</button>
-      <button id="delete-btn" disabled>Delete</button>
+      <span id="update-control" class="record-action-control"><button id="update-btn" disabled>Update</button></span>
+      <span id="delete-control" class="record-action-control"><button id="delete-btn" disabled>Delete</button></span>
+      <span id="record-permission-message" class="sr-only" aria-live="polite"></span>
       <button id="clear-btn">Clear Form</button>
       <button id="export-btn">Export to Excel</button>
     </div>
@@ -299,6 +318,30 @@
       </table>
     </div>
   </div>
+</div>
+
+<div id="image-lightbox" class="image-lightbox hidden" role="dialog" aria-modal="true" aria-labelledby="image-lightbox-title">
+  <div class="image-lightbox__backdrop" data-lightbox-close></div>
+  <section class="image-lightbox__dialog">
+    <header class="image-lightbox__header">
+      <div>
+        <span class="image-lightbox__eyebrow">Inventory image</span>
+        <h2 id="image-lightbox-title">Image detail viewer</h2>
+      </div>
+      <button id="image-lightbox-close" class="image-lightbox__close" type="button" aria-label="Close image viewer">&times;</button>
+    </header>
+    <div id="image-lightbox-stage" class="image-lightbox__stage" aria-label="Zoomed image. Drag to pan.">
+      <img id="image-lightbox-image" draggable="false" alt="Enlarged inventory image">
+      <p class="image-lightbox__hint">Scroll to zoom &middot; Drag to pan &middot; Double-click to reset</p>
+    </div>
+    <footer class="image-lightbox__toolbar" aria-label="Image zoom controls">
+      <button id="image-lightbox-zoom-out" type="button" aria-label="Zoom out">&minus;</button>
+      <input id="image-lightbox-zoom" type="range" min="100" max="500" step="10" value="100" aria-label="Zoom level">
+      <output id="image-lightbox-zoom-value" for="image-lightbox-zoom">100%</output>
+      <button id="image-lightbox-zoom-in" type="button" aria-label="Zoom in">+</button>
+      <button id="image-lightbox-reset" class="image-lightbox__reset" type="button">Reset view</button>
+    </footer>
+  </section>
 </div>
 
 <button id="assistant-toggle" type="button" aria-controls="assistant-panel" aria-expanded="false">
@@ -357,6 +400,58 @@ function apiRequest(url, options) {
 var TABS = {{ tabs_json|safe }};
 var currentTabKey = TABS[0].key;
 var projectSelector = document.getElementById('project-selector');
+var projectMenuTrigger = document.getElementById('project-menu-trigger');
+var projectMenu = document.getElementById('project-menu');
+var projectMenuSearch = document.getElementById('project-menu-search');
+var projectMenuEmpty = document.getElementById('project-menu-empty');
+var projectMenuOptions = Array.prototype.slice.call(document.querySelectorAll('.project-menu__option'));
+
+function closeProjectMenu() {
+  projectMenu.hidden = true;
+  projectMenuTrigger.setAttribute('aria-expanded', 'false');
+  projectMenuSearch.value = '';
+  projectMenuOptions.forEach(function (option) { option.hidden = false; });
+  projectMenuEmpty.hidden = true;
+}
+projectMenuTrigger.addEventListener('click', function () {
+  var opening = projectMenu.hidden;
+  if (opening) {
+    var rect = document.getElementById('project-switcher').getBoundingClientRect();
+    projectMenu.style.top = (rect.bottom + 8) + 'px';
+    projectMenu.style.left = Math.max(10, Math.min(rect.left, window.innerWidth - 330)) + 'px';
+    projectMenu.style.width = Math.min(320, window.innerWidth - 20) + 'px';
+    projectMenu.hidden = false;
+    projectMenuTrigger.setAttribute('aria-expanded', 'true');
+    try { projectMenuSearch.focus({preventScroll: true}); }
+    catch (error) { projectMenuSearch.focus(); }
+  } else closeProjectMenu();
+});
+projectMenuSearch.addEventListener('input', function () {
+  var query = projectMenuSearch.value.trim().toLocaleLowerCase();
+  var visible = 0;
+  projectMenuOptions.forEach(function (option) {
+    option.hidden = !option.dataset.projectName.toLocaleLowerCase().includes(query);
+    if (!option.hidden) visible += 1;
+  });
+  projectMenuEmpty.hidden = visible !== 0;
+});
+projectMenuOptions.forEach(function (option) {
+  option.addEventListener('click', function () {
+    if (option.dataset.projectId === projectSelector.value) { closeProjectMenu(); return; }
+    projectSelector.value = option.dataset.projectId;
+    document.getElementById('project-menu-value').textContent = option.dataset.projectName;
+    closeProjectMenu();
+    projectSelector.dispatchEvent(new Event('change'));
+  });
+});
+document.addEventListener('click', function (event) {
+  if (!document.getElementById('project-switcher').contains(event.target)) closeProjectMenu();
+});
+document.addEventListener('keydown', function (event) {
+  if (event.key === 'Escape' && !projectMenu.hidden) { closeProjectMenu(); projectMenuTrigger.focus(); }
+});
+window.addEventListener('resize', function () { if (!projectMenu.hidden) closeProjectMenu(); });
+window.addEventListener('scroll', function () { if (!projectMenu.hidden) closeProjectMenu(); }, {passive: true});
 
 projectSelector.addEventListener('change', function () {
   projectSelector.disabled = true;
@@ -376,6 +471,7 @@ projectSelector.addEventListener('change', function () {
 var spec = null;
 var allRecords = [];
 var editingId = null;
+var editingCanModify = false;
 var nextIdPreview = 1;
 var fieldEls = {};
 var autoEls = {};
@@ -389,6 +485,138 @@ var pendingImageFile = null;
 var imageFileName = document.getElementById('image-file-name');
 var imageUploadStatus = document.getElementById('image-upload-status');
 var MAX_IMAGE_UPLOAD_BYTES = 20 * 1024 * 1024;
+var creatorOnlyTooltip = 'Only the creator can edit this record';
+
+function setRecordActionPermissions(canModify, hasRecord) {
+  editingCanModify = Boolean(canModify && hasRecord);
+  var updateButton = document.getElementById('update-btn');
+  var deleteButton = document.getElementById('delete-btn');
+  var updateControl = document.getElementById('update-control');
+  var deleteControl = document.getElementById('delete-control');
+  updateButton.disabled = !editingCanModify;
+  deleteButton.disabled = !editingCanModify;
+  var message = hasRecord && !canModify ? creatorOnlyTooltip : '';
+  updateControl.classList.toggle('is-permission-disabled', Boolean(message));
+  deleteControl.classList.toggle('is-permission-disabled', Boolean(message));
+  if (message) {
+    updateControl.title = message;
+    deleteControl.title = message;
+  } else {
+    updateControl.removeAttribute('title');
+    deleteControl.removeAttribute('title');
+  }
+  updateButton.setAttribute('aria-describedby', message ? 'record-permission-message' : '');
+  deleteButton.setAttribute('aria-describedby', message ? 'record-permission-message' : '');
+  document.getElementById('record-permission-message').textContent = message;
+}
+var imageLightbox = document.getElementById('image-lightbox');
+var imageLightboxStage = document.getElementById('image-lightbox-stage');
+var imageLightboxImage = document.getElementById('image-lightbox-image');
+var imageLightboxClose = document.getElementById('image-lightbox-close');
+var imageLightboxZoom = document.getElementById('image-lightbox-zoom');
+var imageLightboxZoomValue = document.getElementById('image-lightbox-zoom-value');
+var lightboxScale = 1;
+var lightboxX = 0;
+var lightboxY = 0;
+var lightboxDragging = false;
+var lightboxDragStartX = 0;
+var lightboxDragStartY = 0;
+var lightboxOriginX = 0;
+var lightboxOriginY = 0;
+var lightboxPreviousFocus = null;
+
+function renderLightboxTransform() {
+  imageLightboxImage.style.transform = 'translate3d(' + lightboxX + 'px,' + lightboxY + 'px,0) scale(' + lightboxScale + ')';
+  imageLightboxZoom.value = String(Math.round(lightboxScale * 100));
+  imageLightboxZoomValue.textContent = Math.round(lightboxScale * 100) + '%';
+  imageLightboxStage.classList.toggle('is-zoomed', lightboxScale > 1);
+}
+
+function resetLightboxView() {
+  lightboxScale = 1;
+  lightboxX = 0;
+  lightboxY = 0;
+  renderLightboxTransform();
+}
+
+function setLightboxScale(nextScale, anchorX, anchorY) {
+  var previousScale = lightboxScale;
+  lightboxScale = Math.min(5, Math.max(1, nextScale));
+  if (anchorX !== undefined && previousScale !== lightboxScale) {
+    lightboxX = anchorX - (anchorX - lightboxX) * (lightboxScale / previousScale);
+    lightboxY = anchorY - (anchorY - lightboxY) * (lightboxScale / previousScale);
+  }
+  if (lightboxScale === 1) { lightboxX = 0; lightboxY = 0; }
+  renderLightboxTransform();
+}
+
+function openImageLightbox() {
+  if (!imagePreview || !imagePreview.src || imagePreview.classList.contains('hidden')) return;
+  lightboxPreviousFocus = document.activeElement;
+  imageLightboxImage.src = imagePreview.src;
+  imageLightbox.classList.remove('hidden');
+  document.body.classList.add('has-image-lightbox');
+  resetLightboxView();
+  imageLightboxClose.focus();
+}
+
+function closeImageLightbox() {
+  if (imageLightbox.classList.contains('hidden')) return;
+  imageLightbox.classList.add('is-closing');
+  window.setTimeout(function () {
+    imageLightbox.classList.add('hidden');
+    imageLightbox.classList.remove('is-closing');
+    imageLightboxImage.removeAttribute('src');
+    document.body.classList.remove('has-image-lightbox');
+    if (lightboxPreviousFocus && lightboxPreviousFocus.focus) lightboxPreviousFocus.focus();
+  }, 160);
+}
+
+imagePreview.addEventListener('click', openImageLightbox);
+imagePreview.addEventListener('keydown', function (event) {
+  if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openImageLightbox(); }
+});
+imageLightboxClose.addEventListener('click', closeImageLightbox);
+imageLightbox.querySelector('[data-lightbox-close]').addEventListener('click', closeImageLightbox);
+document.getElementById('image-lightbox-reset').addEventListener('click', resetLightboxView);
+document.getElementById('image-lightbox-zoom-in').addEventListener('click', function () { setLightboxScale(lightboxScale + .25); });
+document.getElementById('image-lightbox-zoom-out').addEventListener('click', function () { setLightboxScale(lightboxScale - .25); });
+imageLightboxZoom.addEventListener('input', function () { setLightboxScale(Number(imageLightboxZoom.value) / 100); });
+imageLightboxStage.addEventListener('wheel', function (event) {
+  event.preventDefault();
+  var bounds = imageLightboxStage.getBoundingClientRect();
+  setLightboxScale(lightboxScale + (event.deltaY < 0 ? .2 : -.2), event.clientX - bounds.left - bounds.width / 2, event.clientY - bounds.top - bounds.height / 2);
+}, { passive: false });
+imageLightboxStage.addEventListener('pointerdown', function (event) {
+  if (lightboxScale <= 1) return;
+  lightboxDragging = true;
+  lightboxDragStartX = event.clientX; lightboxDragStartY = event.clientY;
+  lightboxOriginX = lightboxX; lightboxOriginY = lightboxY;
+  imageLightboxStage.classList.add('is-dragging');
+  imageLightboxStage.setPointerCapture(event.pointerId);
+});
+imageLightboxStage.addEventListener('pointermove', function (event) {
+  if (!lightboxDragging) return;
+  lightboxX = lightboxOriginX + event.clientX - lightboxDragStartX;
+  lightboxY = lightboxOriginY + event.clientY - lightboxDragStartY;
+  renderLightboxTransform();
+});
+function finishLightboxDrag(event) {
+  if (!lightboxDragging) return;
+  lightboxDragging = false;
+  imageLightboxStage.classList.remove('is-dragging');
+  if (event && imageLightboxStage.hasPointerCapture(event.pointerId)) imageLightboxStage.releasePointerCapture(event.pointerId);
+}
+imageLightboxStage.addEventListener('pointerup', finishLightboxDrag);
+imageLightboxStage.addEventListener('pointercancel', finishLightboxDrag);
+imageLightboxStage.addEventListener('dblclick', resetLightboxView);
+document.addEventListener('keydown', function (event) {
+  if (imageLightbox.classList.contains('hidden')) return;
+  if (event.key === 'Escape') closeImageLightbox();
+  else if (event.key === '+' || event.key === '=') setLightboxScale(lightboxScale + .25);
+  else if (event.key === '-') setLightboxScale(lightboxScale - .25);
+  else if (event.key === '0') resetLightboxView();
+});
 
 imageFileInput.addEventListener('change', function () {
   imageUploadStatus.textContent = '';
@@ -637,7 +865,7 @@ function saveCurrentDraft() {
   });
   if (hasValue || editingId !== null || pendingImageFile) {
     tabDrafts[currentTabKey] = {
-      values: values, editingId: editingId, imageFile: pendingImageFile
+      values: values, editingId: editingId, canModify: editingCanModify, imageFile: pendingImageFile
     };
   } else {
     delete tabDrafts[currentTabKey];
@@ -649,8 +877,7 @@ function restoreCurrentDraft() {
   if (!draft) {
     pendingImageFile = null;
     editingId = null;
-    document.getElementById('update-btn').disabled = true;
-    document.getElementById('delete-btn').disabled = true;
+    setRecordActionPermissions(false, false);
     return;
   }
   Object.keys(draft.values).forEach(function (col) {
@@ -664,8 +891,7 @@ function restoreCurrentDraft() {
   if (spec.mutcd_word_options) updateWordDescriptionChoices(getVal('MUTCD'));
   editingId = draft.editingId;
   var isEditing = editingId !== null;
-  document.getElementById('update-btn').disabled = !isEditing;
-  document.getElementById('delete-btn').disabled = !isEditing;
+  setRecordActionPermissions(draft.canModify !== false, isEditing);
   if (isEditing && autoEls['ID']) autoEls['ID'].textContent = String(editingId);
 }
 
@@ -954,7 +1180,7 @@ document.getElementById('add-btn').addEventListener('click', function () {
 });
 
 document.getElementById('update-btn').addEventListener('click', function () {
-  if (editingId === null) return;
+  if (editingId === null || !editingCanModify) return;
   apiRequest('/api/' + currentTabKey + '/records/' + editingId, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ row: collectRow() })
   }).then(function (res) {
@@ -974,7 +1200,7 @@ document.getElementById('update-btn').addEventListener('click', function () {
 });
 
 document.getElementById('delete-btn').addEventListener('click', function () {
-  if (editingId === null) return;
+  if (editingId === null || !editingCanModify) return;
   if (!confirm('Delete record ' + editingId + '? This cannot be undone.')) return;
   apiRequest('/api/' + currentTabKey + '/records/' + editingId, { method: 'DELETE' })
     .then(function (res) {
@@ -1016,11 +1242,11 @@ function clearForm(keepSticky) {
   }
 
   editingId = null;
+  editingCanModify = false;
   delete tabDrafts[currentTabKey];
   if (spec.mutcd_word_options) updateWordDescriptionChoices('');
   refreshAutoFields();
-  document.getElementById('update-btn').disabled = true;
-  document.getElementById('delete-btn').disabled = true;
+  setRecordActionPermissions(false, false);
   document.querySelectorAll('#table-body tr').forEach(function (tr) { tr.classList.remove('selected'); });
   if (keepSticky) saveCurrentDraft();
 }
@@ -1052,8 +1278,7 @@ function loadRecord(record) {
   editingId = record.ID;
   refreshAutoFields();
   if (autoEls['ID']) autoEls['ID'].textContent = String(record.ID);
-  document.getElementById('update-btn').disabled = false;
-  document.getElementById('delete-btn').disabled = false;
+  setRecordActionPermissions(record._CAN_EDIT === true, true);
 }
 
 // ════════════════════════════════════════════
@@ -1087,7 +1312,13 @@ function renderTable() {
   });
 
   filtered.forEach(function (rec) {
-    var tr = el('tr', { 'data-id': rec.ID });
+    var ownerName = rec._OWNER_NAME || 'Legacy / unknown';
+    var tr = el('tr', {
+      'data-id': rec.ID,
+      title: 'Added by ' + ownerName,
+      'aria-label': 'Record ' + rec.ID + ', added by ' + ownerName
+    });
+    if (!rec._IS_OWN) tr.classList.add('record-row--other');
     if (rec.ID === editingId) tr.classList.add('selected');
     spec.columns.forEach(function (col) {
       var td = el('td');

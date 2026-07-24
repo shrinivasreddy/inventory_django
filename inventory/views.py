@@ -145,6 +145,21 @@ def visible_tab_records(request, key):
     return TabRecord.objects.filter(tab=key, project=project).select_related("owner", "project")
 
 
+def can_modify_record(request, record):
+    return request.user.is_staff or record.owner_id == request.user.id
+
+
+def record_api_row(request, record):
+    row = record.as_row()
+    owner_name = "Legacy / unknown"
+    if record.owner:
+        owner_name = record.owner.get_full_name().strip() or record.owner.username
+    row["_OWNER_NAME"] = owner_name
+    row["_IS_OWN"] = record.owner_id == request.user.id
+    row["_CAN_EDIT"] = can_modify_record(request, record)
+    return row
+
+
 def renumber_tab_ids(key):
     """Ported from renumber_ids: re-sequence to 1..N after a delete. Safe to
     do as individual .save() calls in ascending order -- each target slot is
@@ -342,7 +357,7 @@ def api_records(request, key):
     if request.method == "GET":
         with locks[key]:
             qs = visible_tab_records(request, key).order_by("tab_record_id")
-            records = [r.as_row() for r in qs]
+            records = [record_api_row(request, r) for r in qs]
             nid = next_tab_id(key)
         return JsonResponse({"records": records, "next_id": nid})
 
@@ -383,7 +398,7 @@ def api_records(request, key):
             except Exception:
                 return JsonResponse({"error": "Failed to save the record to the database."}, status=500)
             return JsonResponse({
-                "record": rec.as_row(),
+                "record": record_api_row(request, rec),
                 "next_id": next_tab_id(key),
             })
 
@@ -391,7 +406,10 @@ def api_records(request, key):
         with locks[key]:
             try:
                 with transaction.atomic():
-                    visible_tab_records(request, key).delete()
+                    records = visible_tab_records(request, key)
+                    if not request.user.is_staff:
+                        records = records.filter(owner=request.user)
+                    records.delete()
             except Exception:
                 return JsonResponse({"error": "Failed to clear records."}, status=500)
         return JsonResponse({"ok": True, "next_id": next_tab_id(key)})
@@ -430,6 +448,10 @@ def api_record_detail(request, key, rec_id):
                 rec = visible_tab_records(request, key).get(tab_record_id=rec_id)
             except TabRecord.DoesNotExist:
                 return JsonResponse({"error": "Record not found"}, status=404)
+            if not can_modify_record(request, rec):
+                return JsonResponse(
+                    {"error": "Only the creator can edit this record."}, status=403
+                )
 
             # Image links are generated only by the upload endpoint. Preserve
             # the existing value during normal record edits.
@@ -447,7 +469,7 @@ def api_record_detail(request, key, rec_id):
                     rec.save(update_fields=["data", "updated_at"])
             except Exception:
                 return JsonResponse({"error": "Failed to save the record to the database."}, status=500)
-            return JsonResponse({"record": rec.as_row()})
+            return JsonResponse({"record": record_api_row(request, rec)})
 
     if request.method == "DELETE":
         with locks[key]:
@@ -455,6 +477,10 @@ def api_record_detail(request, key, rec_id):
                 rec = visible_tab_records(request, key).get(tab_record_id=rec_id)
             except TabRecord.DoesNotExist:
                 return JsonResponse({"error": "Record not found"}, status=404)
+            if not can_modify_record(request, rec):
+                return JsonResponse(
+                    {"error": "Only the creator can delete this record."}, status=403
+                )
             try:
                 with transaction.atomic():
                     rec.delete()
@@ -478,6 +504,10 @@ def api_record_image(request, key, rec_id):
             rec = visible_tab_records(request, key).get(tab_record_id=rec_id)
         except TabRecord.DoesNotExist:
             return JsonResponse({"error": "Record not found"}, status=404)
+        if not can_modify_record(request, rec):
+            return JsonResponse(
+                {"error": "Only the creator can replace this record's image."}, status=403
+            )
         try:
             filename, _ = save_record_image(key, rec_id, upload)
         except InventoryImageError as exc:
@@ -505,7 +535,7 @@ def api_record_image(request, key, rec_id):
         data["IMAGE_LINK"] = image_url
         rec.data = data
         rec.save(update_fields=["data", "updated_at"])
-    return JsonResponse({"record": rec.as_row()})
+    return JsonResponse({"record": record_api_row(request, rec)})
 
 
 @login_required

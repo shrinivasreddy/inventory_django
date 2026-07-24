@@ -2,10 +2,13 @@
 html, body, input, textarea, select, button { font-family:"Khula","Segoe UI",Arial,sans-serif; }
 html, body, #content-main .module table, #changelist .actions, #changelist .paginator, #toolbar, .submit-row { background:#f6f6f6; }
 body { color:#000716; }
-#header { min-height:78px; border:0; background:linear-gradient(110deg,#000716,#002a7d); }
+#header { box-sizing:border-box; min-height:112px; padding:20px 30px; align-items:center; gap:24px; border:0; background:linear-gradient(110deg,#000716,#002a7d); }
+#branding { min-width:0; flex:1 1 auto; }
 .admin-brand { display:flex; align-items:center; gap:18px; color:#fff!important; text-decoration:none; }
-.admin-brand img { width:170px; height:auto; }
-.admin-brand span { padding-left:18px; border-left:1px solid rgba(255,255,255,.28); font-size:16px; font-weight:600; }
+.admin-brand img { display:block; width:190px; height:auto; }
+.admin-brand span { padding-left:22px; border-left:1px solid rgba(255,255,255,.28); font-size:16px; font-weight:700; white-space:nowrap; }
+#user-tools { display:flex; min-height:48px; margin:0; padding:0; align-items:center; justify-content:flex-end; gap:8px; line-height:1.35; white-space:nowrap; }
+#user-tools > a:not(.admin-notification), #user-tools > form, #user-tools > button { display:inline-flex; min-height:42px; align-items:center; }
 .module, .inline-group, #changelist-filter, .submit-row, .excel-import-card, .excel-help-card, .confirmation-card { border:1px solid #dce5f2; border-radius:4px; background:#fff; box-shadow:0 12px 35px rgba(0,42,125,.08); }
 .module h2, .module caption, .inline-group h2 { background:#002a7d; color:#fff; }
 input, textarea, select, .vTextField, #nav-filter { border:1px solid #cbd8e8!important; border-radius:2px!important; background:#fff!important; color:#000716!important; }
@@ -21,7 +24,8 @@ input[type="submit"]:hover, button:hover, .button:hover, a.button:hover, .object
 .login #container { border:0; border-radius:4px; background:#fff; box-shadow:0 28px 80px rgba(0,7,22,.38); }
 .login #content, .login .submit-row { background:#fff; }
 .login .form-row label { color:#002a7d; }
-@media (max-width:767px) { .admin-brand { align-items:flex-start; flex-direction:column; gap:8px; } .admin-brand img { width:150px; } .admin-brand span { padding-left:0; border-left:0; } }
+@media (max-width:1000px) { #header { min-height:0; padding:18px 20px; align-items:flex-start; flex-wrap:wrap; } #branding { flex-basis:100%; } #user-tools { width:100%; justify-content:flex-start; flex-wrap:wrap; white-space:normal; } }
+@media (max-width:767px) { #header { padding:16px 14px; } .admin-brand { align-items:flex-start; flex-direction:column; gap:8px; } .admin-brand img { width:165px; } .admin-brand span { padding-left:0; border-left:0; white-space:normal; } #user-tools { gap:6px; font-size:11px; } }
 
 
 /* Complete overrides for the legacy admin component styles. */
@@ -241,6 +245,55 @@ input[type="submit"]:hover, button:hover, .button:hover, a.button:hover, .object
 .approval-review label { display:block; margin-bottom:7px; color:#14386f; font-weight:800; }.approval-review label span { color:#7a899d; font-weight:500; }.approval-review textarea { width:100%; padding:12px; }
 .approval-review__actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:18px; }.approval-review__actions button,.approval-review__actions a { min-width:130px; }.approval-review__actions .approval-approve { background:#16803c!important; color:#fff!important; }.approval-review__actions .approval-reject { background:#b42318!important; color:#fff!important; }.approval-review__actions .approval-cancel { background:#526079!important; color:#fff!important; text-align:center; }
 @media(max-width:600px){.approval-queue>header{flex-direction:column}.approval-card{grid-template-columns:44px 1fr}.approval-card .button{grid-column:1/-1;text-align:center}.approval-review{padding:20px 15px}.approval-review dl div{grid-template-columns:1fr;gap:3px}.approval-review__actions{flex-direction:column}.approval-review__actions>*{width:100%}}
+
+/* User editor: hide implementation-level password hashes and organize the
+   long authorization form into readable, responsive cards. */
+.model-user.change-form #content { max-width:1450px; }
+.model-user.change-form #content > h1 { margin-bottom:18px; color:#002a7d; font-size:30px; font-weight:700; }
+.model-user.change-form #content-main > form > div > fieldset.module {
+  margin-bottom:22px; border:1px solid #d7e2ef; border-radius:12px; overflow:visible;
+  background:#fff; box-shadow:0 12px 34px rgba(0,42,125,.075);
+}
+.model-user.change-form fieldset.module > h2 {
+  margin:0; padding:15px 18px; border-radius:11px 11px 0 0;
+  background:linear-gradient(110deg,#002a7d,#013fae); color:#fff; font-size:16px; font-weight:800;
+}
+.model-user.change-form .form-row { padding:16px 18px; border-bottom-color:#e2eaf4; }
+.model-user.change-form .form-row label { color:#345076; font-weight:800; }
+.model-user.change-form .form-row input[type="text"],
+.model-user.change-form .form-row input[type="email"] { width:min(100%,520px); min-height:44px; padding:9px 11px; }
+.password-security-card {
+  display:grid; grid-template-columns:46px minmax(240px,1fr) auto; align-items:center; gap:14px;
+  width:min(100%,760px); padding:14px; border:1px solid #c9dbee; border-radius:10px;
+  background:linear-gradient(100deg,#f2f7fd,#fff); box-shadow:0 7px 18px rgba(0,42,125,.06);
+}
+.password-security-card__icon { display:grid; width:44px; height:44px; place-items:center; border-radius:10px; background:#e1edfb; color:#01359c; }
+.password-security-card__icon svg { width:22px; height:22px; fill:currentColor; }
+.password-security-card__copy { display:grid; gap:3px; }
+.password-security-card__copy strong { color:#002a7d; font-size:14px; }
+.password-security-card__copy small { color:#667085; line-height:1.4; }
+.password-security-card__action { display:inline-flex!important; align-items:center; justify-content:center; min-width:132px; margin:0!important; border-radius:7px!important; text-decoration:none; }
+.model-user.change-form .field-is_active,.model-user.change-form .field-is_staff,.model-user.change-form .field-is_superuser { background:#f8fbff; }
+.model-user.change-form .field-is_active input,.model-user.change-form .field-is_staff input,.model-user.change-form .field-is_superuser input { width:18px; height:18px; accent-color:#01359c; }
+.model-user.change-form .selector { display:grid; grid-template-columns:minmax(260px,1fr) 138px minmax(260px,1fr); gap:16px; width:100%; max-width:none; }
+.model-user.change-form .selector-available,.model-user.change-form .selector-chosen { width:auto; margin:0; border:1px solid #cbd8e8; border-radius:10px; overflow:hidden; background:#fff; }
+.model-user.change-form .selector h2 { min-height:48px; margin:0; padding:13px 15px; border:0; border-radius:0; background:#eaf2fb; color:#14386f; font-size:14px; font-weight:800; }
+.model-user.change-form .selector-chosen h2 { background:#002a7d; color:#fff; }
+.model-user.change-form .selector-filter { display:flex; align-items:center; gap:8px; min-height:58px; margin:0; padding:9px 11px; border:0; border-bottom:1px solid #dce5f2; background:#fff; }
+.model-user.change-form .selector-filter input { flex:1; min-height:40px; }
+.model-user.change-form .selector select { width:100%; min-height:220px; padding:7px; border:0!important; border-radius:0!important; background:#fff!important; color:#000716!important; font-size:13px; }
+.model-user.change-form .selector-chooser { display:flex; flex-direction:column; align-self:center; gap:10px; width:138px; margin:0; padding:0 6px; }
+.model-user.change-form .selector-chooser li { margin:0; }
+.model-user.change-form .selector-chooser a { display:flex; width:126px; height:44px; align-items:center; justify-content:center; gap:7px; border-radius:8px; background:#002a7d!important; background-image:none!important; color:#fff!important; font-size:0; text-indent:0!important; box-shadow:0 7px 16px rgba(0,42,125,.17); }
+.model-user.change-form .selector-chooser a::before { font-size:19px; font-weight:800; }.model-user.change-form .selector-chooser a::after { font-size:11px; font-weight:800; }
+.model-user.change-form .selector-chooser .selector-add::before { content:"\2192"; }.model-user.change-form .selector-chooser .selector-add::after { content:"Add selected"; }
+.model-user.change-form .selector-chooser .selector-remove::before { content:"\2190"; }.model-user.change-form .selector-chooser .selector-remove::after { content:"Remove selected"; }
+.model-user.change-form .selector-chooser a:hover { background:#ea6600!important; transform:translateY(-1px); }
+.model-user.change-form .selector .selector-chooseall,.model-user.change-form .selector .selector-clearall { display:inline-flex; margin:10px; padding:8px 12px; border-radius:7px; background:#edf4fc; color:#002a7d; font-weight:800; text-decoration:none; }
+.model-user.change-form .selector .selector-chooseall:hover,.model-user.change-form .selector .selector-clearall:hover { background:#002a7d; color:#fff; }
+.model-user.change-form .submit-row { display:flex; align-items:center; gap:11px; padding:16px; border-radius:10px; background:#fff; }
+@media(max-width:950px){.model-user.change-form .selector{grid-template-columns:1fr}.model-user.change-form .selector-chooser{flex-direction:row;justify-content:center;width:100%}.model-user.change-form .selector-chooser .selector-add::before{content:"\2193"}.model-user.change-form .selector-chooser .selector-remove::before{content:"\2191"}}
+@media(max-width:650px){.password-security-card{grid-template-columns:42px 1fr}.password-security-card__action{grid-column:1/-1;width:100%}.model-user.change-form .form-row{padding:14px}.model-user.change-form .selector-chooser{align-items:stretch;flex-direction:column}.model-user.change-form .selector-chooser a{width:100%}.model-user.change-form .submit-row{align-items:stretch;flex-direction:column}.model-user.change-form .submit-row p,.model-user.change-form .submit-row input{width:100%}}
 
 /* Project editor: turn Django's capable but visually dense dual selector into
    a clear, responsive access-assignment workspace. */

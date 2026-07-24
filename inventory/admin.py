@@ -7,6 +7,7 @@ from django.contrib import admin
 from django.contrib import messages
 from django.contrib.auth import get_user_model
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
+from django.contrib.auth.forms import ReadOnlyPasswordHashWidget, UserChangeForm
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Max
@@ -84,6 +85,18 @@ class ProjectAdmin(admin.ModelAdmin):
     class Media:
         js = ("inventory/js/project-members.js",)
 
+    def change_view(self, request, object_id, form_url="", extra_context=None):
+        """Keep Admin's project choice in sync with the View Site workspace.
+
+        The inventory workspace and admin use the same session project key. An
+        admin opening a project here therefore expects the global "View site"
+        link to show that project's records, including rows created by users.
+        """
+        project = self.get_queryset(request).filter(pk=object_id, is_active=True).first()
+        if project is not None:
+            request.session["inventory_project_id"] = project.pk
+        return super().change_view(request, object_id, form_url, extra_context)
+
     @admin.display(description="Assigned users")
     def member_count(self, obj):
         count = obj.members.count()
@@ -142,8 +155,22 @@ except admin.sites.NotRegistered:
     pass
 
 
+class BluedomePasswordHashWidget(ReadOnlyPasswordHashWidget):
+    template_name = "inventory/widgets/read_only_password_hash.html"
+
+
+class BluedomeUserChangeForm(UserChangeForm):
+    class Meta(UserChangeForm.Meta):
+        model = User
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["password"].widget = BluedomePasswordHashWidget()
+
+
 @admin.register(User)
 class BluedomeUserAdmin(DjangoUserAdmin):
+    form = BluedomeUserChangeForm
     list_display = (
         "username",
         "email",

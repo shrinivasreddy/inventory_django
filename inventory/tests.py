@@ -108,6 +108,17 @@ class InventoryImageTests(TestCase):
         self.assertContains(home, "image-upload-input")
         self.assertContains(home, "MAX_IMAGE_UPLOAD_BYTES = 20 * 1024 * 1024")
         self.assertContains(home, "accessibleImageUrl")
+        self.assertContains(home, "option.hidden = !option.dataset.projectName")
+        self.assertContains(home, "updateControl.removeAttribute('title')")
+        self.assertContains(home, "is-permission-disabled")
+        self.assertIn(
+            ".project-menu__option[hidden] { display:none!important; }",
+            (settings.BASE_DIR / "static/inventory/css/brand.css").read_text(encoding="utf-8"),
+        )
+        self.assertContains(home, 'id="image-lightbox"')
+        self.assertContains(home, "Image detail viewer")
+        self.assertContains(home, "openImageLightbox")
+        self.assertContains(home, "setLightboxScale")
         self.assertIn("img-src 'self' data: blob:", home["Content-Security-Policy"])
 
 
@@ -133,6 +144,8 @@ class AuthenticationTests(TestCase):
     def test_login_grants_access_and_logout_revokes_it(self):
         response = self.client.get(reverse("login"))
         self.assertContains(response, "inventory/js/password-visibility")
+        self.assertContains(response, "inventory/img/favicon-32x32")
+        self.assertContains(response, "inventory/img/apple-touch-icon")
         csrf = response.cookies["csrftoken"].value
         response = self.client.post(
             reverse("login"),
@@ -383,6 +396,24 @@ class AuthenticationTests(TestCase):
         self.assertEqual(mail.outbox[1].subject, "Bluedome Inventory account deactivated")
         self.assertIn("can no longer access", mail.outbox[1].body)
 
+    def test_admin_user_change_hides_password_hash_metadata(self):
+        admin_user = User.objects.create_superuser(
+            username="securityadmin",
+            email="securityadmin@example.com",
+            password="StrongPass!234",
+        )
+        self.client.force_login(admin_user)
+
+        response = self.client.get(
+            reverse("admin:auth_user_change", args=[self.user.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Password is securely stored")
+        self.assertContains(response, "Reset password")
+        self.assertNotContains(response, "algorithm:")
+        self.assertNotContains(response, "iterations:")
+
     @override_settings(EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend")
     def test_admin_activation_warns_when_smtp_is_not_configured(self):
         admin_user = User.objects.create_superuser(
@@ -615,17 +646,42 @@ class DatabaseConfigurationTests(TestCase):
             [row["ID"] for row in response.json()["records"]],
             [own.tab_record_id, other.tab_record_id],
         )
+        records = response.json()["records"]
+        self.assertTrue(records[0]["_IS_OWN"])
+        self.assertTrue(records[0]["_CAN_EDIT"])
+        self.assertEqual(records[0]["_OWNER_NAME"], "regularuser")
+        self.assertFalse(records[1]["_IS_OWN"])
+        self.assertFalse(records[1]["_CAN_EDIT"])
+        self.assertEqual(records[1]["_OWNER_NAME"], "otheruser")
 
         response = self.client.delete(
             reverse("api_record_detail", args=["sign", other.tab_record_id])
         )
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(TabRecord.objects.filter(pk=other.pk).exists())
+
+        response = self.client.put(
+            reverse("api_record_detail", args=["sign", other.tab_record_id]),
+            data=json.dumps({"row": {"ST_ID": "CHANGED", "POLE_ID": "P2", "SIGN": "S2"}}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 403)
+        other.refresh_from_db()
+        self.assertEqual(other.data["ST_ID"], "200")
+
+        response = self.client.put(
+            reverse("api_record_detail", args=["sign", own.tab_record_id]),
+            data=json.dumps({"row": {"ST_ID": "OWN-EDIT", "POLE_ID": "P1", "SIGN": "S1"}}),
+            content_type="application/json",
+        )
         self.assertEqual(response.status_code, 200)
-        self.assertFalse(TabRecord.objects.filter(pk=other.pk).exists())
+        own.refresh_from_db()
+        self.assertEqual(own.data["ST_ID"], "OWN-EDIT")
 
         response = self.client.delete(reverse("api_records", args=["sign"]))
         self.assertEqual(response.status_code, 200)
         self.assertFalse(TabRecord.objects.filter(pk=own.pk).exists())
-        self.assertFalse(TabRecord.objects.filter(pk=other.pk).exists())
+        self.assertTrue(TabRecord.objects.filter(pk=other.pk).exists())
 
     def test_admin_sees_all_inventory_with_owner_labels(self):
         other_user = User.objects.create_user(
@@ -656,6 +712,11 @@ class DatabaseConfigurationTests(TestCase):
         self.assertEqual(len(records), 2)
         self.assertNotIn("ADDED_BY", records[0])
         self.assertNotIn("ADDED_BY", records[1])
+        self.assertTrue(all(record["_CAN_EDIT"] for record in records))
+        self.assertEqual(
+            [record["_OWNER_NAME"] for record in records],
+            ["regularuser", "Field Worker"],
+        )
 
         admin_response = self.client.get(
             reverse("admin:inventory_tabrecord_changelist")
@@ -697,6 +758,31 @@ class DatabaseConfigurationTests(TestCase):
             choice for choice in section_filter.lookup_choices if choice[0] == "sign"
         ]
         self.assertEqual(len(sign_choices), 1)
+
+    def test_admin_can_update_and_delete_another_users_record(self):
+        record = TabRecord.objects.create(
+            project=self.project,
+            owner=self.user,
+            tab="sign",
+            tab_record_id=1,
+            data={"ST_ID": "100", "POLE_ID": "P1", "SIGN": "S1"},
+        )
+        self.client.force_login(self.admin_user)
+
+        updated = self.client.put(
+            reverse("api_record_detail", args=["sign", record.tab_record_id]),
+            data=json.dumps({"row": {"ST_ID": "ADMIN-EDIT", "POLE_ID": "P1", "SIGN": "S1"}}),
+            content_type="application/json",
+        )
+        self.assertEqual(updated.status_code, 200)
+        record.refresh_from_db()
+        self.assertEqual(record.data["ST_ID"], "ADMIN-EDIT")
+
+        deleted = self.client.delete(
+            reverse("api_record_detail", args=["sign", record.tab_record_id])
+        )
+        self.assertEqual(deleted.status_code, 200)
+        self.assertFalse(TabRecord.objects.filter(pk=record.pk).exists())
 
     def test_new_inventory_record_is_assigned_to_authenticated_user(self):
         self.client.force_login(self.user)
@@ -1346,6 +1432,45 @@ class ProjectAccessTests(TestCase):
         )
         response = self.client.get(reverse("api_records", args=["sign"]))
         self.assertEqual([row["ST_ID"] for row in response.json()["records"]], ["B"])
+
+    def test_user_created_record_is_visible_to_admin_in_same_project(self):
+        self.client.force_login(self.user)
+        created = self.client.post(
+            reverse("api_records", args=["sign"]),
+            data=json.dumps({"row": {"ST_ID": "USER-NEW", "POLE_ID": "P9", "SIGN": "S9"}}),
+            content_type="application/json",
+        )
+        self.assertEqual(created.status_code, 200)
+        record = TabRecord.objects.get(project=self.alpha, data__ST_ID="USER-NEW")
+        self.assertEqual(record.owner, self.user)
+
+        self.client.force_login(self.admin)
+        selected = self.client.post(
+            reverse("api_select_project"),
+            data=json.dumps({"project_id": self.alpha.pk}),
+            content_type="application/json",
+        )
+        self.assertEqual(selected.status_code, 200)
+        response = self.client.get(reverse("api_records", args=["sign"]))
+        self.assertIn("USER-NEW", [row["ST_ID"] for row in response.json()["records"]])
+
+    def test_opening_project_in_admin_syncs_view_site_project_context(self):
+        self.client.force_login(self.admin)
+        session = self.client.session
+        session["inventory_project_id"] = self.beta.pk
+        session.save()
+
+        response = self.client.get(
+            reverse("admin:inventory_project_change", args=[self.alpha.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.client.session["inventory_project_id"], self.alpha.pk)
+        view_site_records = self.client.get(reverse("api_records", args=["sign"]))
+        self.assertEqual(
+            [row["ST_ID"] for row in view_site_records.json()["records"]],
+            ["A"],
+        )
 
     def test_admin_view_all_records_is_grouped_by_project(self):
         self.client.force_login(self.admin)
