@@ -131,6 +131,11 @@ input:focus, select:focus, textarea:focus { border-color: var(--bd-blue); box-sh
 #delete-btn { background: var(--bd-danger); color: var(--bd-white); }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(234, 102, 0, 0.38); outline-offset: 2px; }
 #status, #record-count { color: var(--bd-muted); }
+.insert-action-heading,.insert-action-cell { width:102px; min-width:102px; text-align:center!important; }
+.insert-below-btn { min-height:30px; padding:5px 9px; border:1px solid #9cb4d4; border-radius:5px; background:#fff; color:var(--bd-navy); font-size:11px; font-weight:800; opacity:0; transform:translateY(3px); cursor:pointer; transition:opacity .15s ease,transform .15s ease,background .15s ease,color .15s ease; }
+tbody tr:hover .insert-below-btn,.insert-below-btn:focus-visible { opacity:1; transform:none; }
+.insert-below-btn:hover { border-color:var(--bd-orange); background:var(--bd-orange); color:#fff; }
+@media(hover:none){.insert-below-btn{opacity:1;transform:none}}
 #table-scroll { border: 1px solid var(--bd-border); border-radius: 2px; }
 thead th { border-bottom: 0; background: var(--bd-navy); color: var(--bd-white); font-weight: 700; letter-spacing: 0.025em; }
 tbody td { border-bottom: 1px solid #e7edf5; color: #26334c; }
@@ -138,9 +143,6 @@ tbody tr:nth-child(even) { background: #f8fbfe; }
 tbody tr:hover { background: #eaf6fc; }
 tbody tr.selected { background: var(--bd-blue); color: var(--bd-white); }
 tbody tr.selected td { color: var(--bd-white); }
-tbody tr.record-row--other:not(.selected) { background:#eef1f5; }
-tbody tr.record-row--other:not(.selected) td { color:#7a8494; }
-tbody tr.record-row--other:not(.selected):hover { background:#e2e6ec; }
 #form-actions .record-action-control { display:flex; flex:1; min-width:100px; }
 #form-actions .record-action-control button { width:100%; min-width:0; }
 #form-actions .record-action-control.is-permission-disabled { cursor:not-allowed; }

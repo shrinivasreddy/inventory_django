@@ -12,6 +12,7 @@ from django.contrib.auth.password_validation import get_default_password_validat
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import F, Max
 from django.http import FileResponse, JsonResponse, HttpResponseNotAllowed, HttpResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -108,7 +109,6 @@ def parse_json_body(request):
 
 
 def next_tab_id(key):
-    from django.db.models import Max
     max_id = TabRecord.objects.filter(tab=key).aggregate(m=Max("tab_record_id"))["m"]
     return (max_id or 0) + 1
 
@@ -142,7 +142,12 @@ def visible_tab_records(request, key):
     project = selected_project(request)
     if project is None:
         return TabRecord.objects.none()
-    return TabRecord.objects.filter(tab=key, project=project).select_related("owner", "project")
+    records = TabRecord.objects.filter(
+        tab=key, project=project
+    ).select_related("owner", "project")
+    if not request.user.is_staff:
+        records = records.filter(owner=request.user)
+    return records
 
 
 def can_modify_record(request, record):
@@ -356,7 +361,7 @@ def api_records(request, key):
 
     if request.method == "GET":
         with locks[key]:
-            qs = visible_tab_records(request, key).order_by("tab_record_id")
+            qs = visible_tab_records(request, key).order_by("display_order", "tab_record_id")
             records = [record_api_row(request, r) for r in qs]
             nid = next_tab_id(key)
         return JsonResponse({"records": records, "next_id": nid})
@@ -388,10 +393,37 @@ def api_records(request, key):
             try:
                 with transaction.atomic():
                     new_id = next_tab_id(key)
+                    insert_after_id = body.get("insert_after_id")
+                    if insert_after_id not in (None, ""):
+                        try:
+                            insert_after_id = int(insert_after_id)
+                            target = (
+                                visible_tab_records(request, key)
+                                .select_for_update()
+                                .get(tab_record_id=insert_after_id)
+                            )
+                        except (TypeError, ValueError, TabRecord.DoesNotExist):
+                            return JsonResponse(
+                                {"error": "The selected insertion position is no longer available."},
+                                status=404,
+                            )
+                        next_order = target.display_order + 1
+                        TabRecord.objects.filter(
+                            project=project,
+                            tab=key,
+                            display_order__gte=next_order,
+                        ).update(display_order=F("display_order") + 1)
+                    else:
+                        next_order = (
+                            TabRecord.objects.filter(project=project, tab=key)
+                            .aggregate(value=Max("display_order"))["value"]
+                            or 0
+                        ) + 1
                     rec = TabRecord.objects.create(
                         project=project,
                         tab=key,
                         tab_record_id=new_id,
+                        display_order=next_order,
                         data=row,
                         owner=request.user,
                     )
@@ -736,7 +768,7 @@ def api_export(request, key):
     with locks[key]:
         records = [
             r.as_row()
-            for r in visible_tab_records(request, key).order_by("tab_record_id")
+            for r in visible_tab_records(request, key).order_by("display_order", "tab_record_id")
         ]
     if not records:
         return JsonResponse({"error": "There are no records to export yet."}, status=400)
@@ -758,7 +790,7 @@ def api_export_all(request):
         with locks[key]:
             snapshots[key] = [
                 r.as_row()
-                for r in visible_tab_records(request, key).order_by("tab_record_id")
+                for r in visible_tab_records(request, key).order_by("display_order", "tab_record_id")
             ]
 
     wb = Workbook()

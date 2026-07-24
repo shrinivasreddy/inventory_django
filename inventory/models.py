@@ -169,13 +169,14 @@ class TabRecord(models.Model):
     )
     tab = models.CharField(max_length=20, db_index=True)
     tab_record_id = models.PositiveIntegerField()  # the per-tab sequential "ID" shown to users
+    display_order = models.PositiveIntegerField(default=0, db_index=True)
     data = models.JSONField(default=dict)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         unique_together = [("tab", "tab_record_id")]
-        ordering = ["tab_record_id"]
+        ordering = ["display_order", "tab_record_id"]
         indexes = [
             models.Index(fields=["tab", "tab_record_id"]),
             models.Index(fields=["owner", "tab"], name="inventory_owner_tab_idx"),
@@ -190,6 +191,16 @@ class TabRecord(models.Model):
             else:
                 row["ADDED_BY"] = "Legacy / unknown"
         return row
+
+    def save(self, *args, **kwargs):
+        if not self.display_order and self.project_id and self.tab:
+            current_max = (
+                type(self).objects.filter(project_id=self.project_id, tab=self.tab)
+                .aggregate(value=models.Max("display_order"))["value"]
+                or 0
+            )
+            self.display_order = current_max + 1
+        super().save(*args, **kwargs)
 
 
 class TabState(models.Model):

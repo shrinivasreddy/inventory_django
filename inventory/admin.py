@@ -888,7 +888,7 @@ class TabRecordAdmin(admin.ModelAdmin):
         InventoryDateAddedFilter,
     )
     search_fields = ("tab_record_id", "owner__username", "owner__email")
-    ordering = ("tab", "tab_record_id")
+    ordering = ("project", "tab", "display_order", "tab_record_id")
     change_list_template = "admin/inventory/tabrecord/change_list.html"
 
     @staticmethod
@@ -1089,12 +1089,18 @@ class TabRecordAdmin(admin.ModelAdmin):
                                         .aggregate(value=Max("tab_record_id"))["value"]
                                         or 0
                                     )
+                                    max_order = (
+                                        TabRecord.objects.filter(project=project, tab=section_key)
+                                        .aggregate(value=Max("display_order"))["value"]
+                                        or 0
+                                    )
                                     TabRecord.objects.bulk_create(
                                         [
                                             TabRecord(
                                                 project=project,
                                                 tab=section_key,
                                                 tab_record_id=max_id + offset,
+                                                display_order=max_order + offset,
                                                 data=row,
                                                 owner=request.user,
                                             )
@@ -1155,7 +1161,7 @@ class TabRecordAdmin(admin.ModelAdmin):
             records = list(
                 TabRecord.objects.filter(tab=section_key, project=project)
                 .select_related("owner")
-                .order_by("tab_record_id")
+                .order_by("display_order", "tab_record_id")
             )
             ws = workbook.create_sheet(spec["export_sheet_name"])
             export_columns = list(spec["columns"]) + ["ADDED_BY"]

@@ -472,6 +472,7 @@ var spec = null;
 var allRecords = [];
 var editingId = null;
 var editingCanModify = false;
+var insertAfterId = null;
 var nextIdPreview = 1;
 var fieldEls = {};
 var autoEls = {};
@@ -713,6 +714,7 @@ function switchTab(key) {
   pendingImageFile = null;
   currentTabKey = key;
   editingId = null;
+  insertAfterId = null;
   buildTabBar();
   loadSpecAndRecords();
 }
@@ -863,9 +865,10 @@ function saveCurrentDraft() {
     values[col] = getVal(col);
     if (values[col] !== '') hasValue = true;
   });
-  if (hasValue || editingId !== null || pendingImageFile) {
+  if (hasValue || editingId !== null || insertAfterId !== null || pendingImageFile) {
     tabDrafts[currentTabKey] = {
-      values: values, editingId: editingId, canModify: editingCanModify, imageFile: pendingImageFile
+      values: values, editingId: editingId, canModify: editingCanModify,
+      insertAfterId: insertAfterId, imageFile: pendingImageFile
     };
   } else {
     delete tabDrafts[currentTabKey];
@@ -877,6 +880,8 @@ function restoreCurrentDraft() {
   if (!draft) {
     pendingImageFile = null;
     editingId = null;
+    insertAfterId = null;
+    updateInsertMode();
     setRecordActionPermissions(false, false);
     return;
   }
@@ -890,6 +895,8 @@ function restoreCurrentDraft() {
   }
   if (spec.mutcd_word_options) updateWordDescriptionChoices(getVal('MUTCD'));
   editingId = draft.editingId;
+  insertAfterId = draft.insertAfterId || null;
+  updateInsertMode();
   var isEditing = editingId !== null;
   setRecordActionPermissions(draft.canModify !== false, isEditing);
   if (isEditing && autoEls['ID']) autoEls['ID'].textContent = String(editingId);
@@ -1154,16 +1161,19 @@ function replaceLocalRecord(record) {
 }
 
 document.getElementById('add-btn').addEventListener('click', function () {
+  var requestedInsertAfterId = insertAfterId;
   apiRequest('/api/' + currentTabKey + '/records', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ row: collectRow() })
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ row: collectRow(), insert_after_id: insertAfterId })
   }).then(function (res) {
       if (!res.ok) { setStatus(res.data.error); return; }
       nextIdPreview = res.data.next_id;
       var savedRecord = res.data.record;
       return uploadRecordImage(savedRecord).then(function (finalRecord) {
-        replaceLocalRecord(finalRecord);
+        if (requestedInsertAfterId === null) replaceLocalRecord(finalRecord);
         setStatus('Record ' + finalRecord.ID + ' added.');
         clearForm(false);
+        if (requestedInsertAfterId !== null) loadRecords();
       }).catch(function (err) {
         // Creating the data row and storing its required image is one logical
         // operation. Compensate for a failed image upload by removing the new
@@ -1243,6 +1253,8 @@ function clearForm(keepSticky) {
 
   editingId = null;
   editingCanModify = false;
+  insertAfterId = null;
+  updateInsertMode();
   delete tabDrafts[currentTabKey];
   if (spec.mutcd_word_options) updateWordDescriptionChoices('');
   refreshAutoFields();
@@ -1252,6 +1264,8 @@ function clearForm(keepSticky) {
 }
 
 function loadRecord(record) {
+  insertAfterId = null;
+  updateInsertMode();
   spec.columns.forEach(function (col) {
     var cond = spec.conditional_dropdowns || {};
     var isConditional = !!cond[col];
@@ -1287,7 +1301,28 @@ function loadRecord(record) {
 function buildTableHead() {
   var tr = document.getElementById('table-head');
   tr.innerHTML = '';
+  tr.appendChild(el('th', { text: 'Insert', class: 'insert-action-heading' }));
   spec.columns.forEach(function (col) { tr.appendChild(el('th', { text: col.replace(/_/g, ' ') })); });
+}
+
+function updateInsertMode() {
+  var addButton = document.getElementById('add-btn');
+  if (!addButton) return;
+  addButton.textContent = insertAfterId === null ? 'Add Record' : 'Insert Below ID ' + insertAfterId;
+  addButton.title = insertAfterId === null
+    ? 'Add this record at the end of the list'
+    : 'Save this new record immediately below record ID ' + insertAfterId;
+}
+
+function beginInsertBelow(record) {
+  clearForm(false);
+  insertAfterId = record.ID;
+  updateInsertMode();
+  setStatus('New record will be inserted below ID ' + record.ID + '. Existing IDs will not change.');
+  var firstField = spec.columns.map(function (column) { return fieldEls[column]; })
+    .find(function (field) { return field && !field.disabled && !field.readOnly; });
+  if (firstField) firstField.focus();
+  document.getElementById('form-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function loadRecords() {
@@ -1312,14 +1347,20 @@ function renderTable() {
   });
 
   filtered.forEach(function (rec) {
-    var ownerName = rec._OWNER_NAME || 'Legacy / unknown';
-    var tr = el('tr', {
-      'data-id': rec.ID,
-      title: 'Added by ' + ownerName,
-      'aria-label': 'Record ' + rec.ID + ', added by ' + ownerName
-    });
-    if (!rec._IS_OWN) tr.classList.add('record-row--other');
+    var tr = el('tr', { 'data-id': rec.ID });
     if (rec.ID === editingId) tr.classList.add('selected');
+    var insertCell = el('td', { class: 'insert-action-cell' });
+    var insertButton = el('button', {
+      type: 'button', class: 'insert-below-btn', text: 'Insert below',
+      title: 'Insert a new record immediately below ID ' + rec.ID,
+      'aria-label': 'Insert new record below record ' + rec.ID
+    });
+    insertButton.addEventListener('click', function (event) {
+      event.stopPropagation();
+      beginInsertBelow(rec);
+    });
+    insertCell.appendChild(insertButton);
+    tr.appendChild(insertCell);
     spec.columns.forEach(function (col) {
       var td = el('td');
       if (col === 'IMAGE_LINK' && rec[col]) {
@@ -1347,7 +1388,6 @@ function renderTable() {
 }
 
 document.getElementById('search-box').addEventListener('input', renderTable);
-
 var assistantPreview = null;
 var assistantPanel = document.getElementById('assistant-panel');
 var assistantToggle = document.getElementById('assistant-toggle');

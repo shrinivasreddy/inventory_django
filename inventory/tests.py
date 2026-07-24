@@ -119,7 +119,78 @@ class InventoryImageTests(TestCase):
         self.assertContains(home, "Image detail viewer")
         self.assertContains(home, "openImageLightbox")
         self.assertContains(home, "setLightboxScale")
+        self.assertNotContains(home, 'id="swap-records-btn"')
+        self.assertContains(home, "Insert below")
+        self.assertContains(home, "beginInsertBelow")
+        self.assertContains(home, "insert_after_id")
         self.assertIn("img-src 'self' data: blob:", home["Content-Security-Policy"])
+
+
+class RecordOrderingTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user("swap-user", password="StrongPass!234")
+        self.other = User.objects.create_user("swap-other", password="StrongPass!234")
+        self.admin = User.objects.create_superuser(
+            "swap-admin", "swap-admin@example.com", "StrongPass!234"
+        )
+        self.project = Project.objects.create(name="Swap Project", code="swap-project")
+        self.project.members.add(self.user, self.other)
+        self.first = TabRecord.objects.create(
+            project=self.project, owner=self.user, tab="sign", tab_record_id=1,
+            data={"ST_ID": "ONE", "POLE_ID": "P1", "SIGN": "S1"},
+        )
+        self.second = TabRecord.objects.create(
+            project=self.project, owner=self.user, tab="sign", tab_record_id=2,
+            data={"ST_ID": "TWO", "POLE_ID": "P2", "SIGN": "S2"},
+        )
+        self.other_record = TabRecord.objects.create(
+            project=self.project, owner=self.other, tab="sign", tab_record_id=3,
+            data={"ST_ID": "THREE", "POLE_ID": "P3", "SIGN": "S3"},
+        )
+
+    def listed_ids(self):
+        response = self.client.get(reverse("api_records", args=["sign"]))
+        self.assertEqual(response.status_code, 200)
+        return [record["ID"] for record in response.json()["records"]]
+
+    def insert_below(self, target_id, st_id="INSERTED"):
+        return self.client.post(
+            reverse("api_records", args=["sign"]),
+            data=json.dumps({
+                "row": {"ST_ID": st_id, "POLE_ID": "P4", "SIGN": "S4"},
+                "insert_after_id": target_id,
+            }),
+            content_type="application/json",
+        )
+
+    def test_regular_user_inserts_below_own_record_without_changing_ids(self):
+        self.client.force_login(self.user)
+        response = self.insert_below(1)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["record"]["ID"], 4)
+        self.assertEqual(self.listed_ids(), [1, 4, 2])
+        self.assertEqual(
+            list(
+                TabRecord.objects.filter(project=self.project, tab="sign")
+                .order_by("display_order")
+                .values_list("tab_record_id", flat=True)
+            ),
+            [1, 4, 2, 3],
+        )
+
+    def test_regular_user_cannot_insert_below_another_users_record(self):
+        self.client.force_login(self.user)
+        response = self.insert_below(3)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(self.listed_ids(), [1, 2])
+        self.assertEqual(TabRecord.objects.count(), 3)
+
+    def test_admin_can_insert_below_another_users_record(self):
+        self.client.force_login(self.admin)
+        response = self.insert_below(3, st_id="ADMIN-INSERT")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["record"]["ID"], 4)
+        self.assertEqual(self.listed_ids(), [1, 2, 3, 4])
 
 
 class AuthenticationTests(TestCase):
@@ -621,7 +692,7 @@ class DatabaseConfigurationTests(TestCase):
             response.json()["options"]["SIGN_CONDITION"],
         )
 
-    def test_regular_users_share_records_only_within_their_project(self):
+    def test_regular_users_only_see_and_modify_their_own_project_records(self):
         other_user = User.objects.create_user(
             username="otheruser",
             password="StrongPass!234",
@@ -644,20 +715,17 @@ class DatabaseConfigurationTests(TestCase):
         response = self.client.get(reverse("api_records", args=["sign"]))
         self.assertEqual(
             [row["ID"] for row in response.json()["records"]],
-            [own.tab_record_id, other.tab_record_id],
+            [own.tab_record_id],
         )
         records = response.json()["records"]
         self.assertTrue(records[0]["_IS_OWN"])
         self.assertTrue(records[0]["_CAN_EDIT"])
         self.assertEqual(records[0]["_OWNER_NAME"], "regularuser")
-        self.assertFalse(records[1]["_IS_OWN"])
-        self.assertFalse(records[1]["_CAN_EDIT"])
-        self.assertEqual(records[1]["_OWNER_NAME"], "otheruser")
 
         response = self.client.delete(
             reverse("api_record_detail", args=["sign", other.tab_record_id])
         )
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 404)
         self.assertTrue(TabRecord.objects.filter(pk=other.pk).exists())
 
         response = self.client.put(
@@ -665,7 +733,7 @@ class DatabaseConfigurationTests(TestCase):
             data=json.dumps({"row": {"ST_ID": "CHANGED", "POLE_ID": "P2", "SIGN": "S2"}}),
             content_type="application/json",
         )
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 404)
         other.refresh_from_db()
         self.assertEqual(other.data["ST_ID"], "200")
 
