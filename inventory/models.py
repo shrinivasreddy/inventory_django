@@ -13,6 +13,9 @@ Flask version's flat JSON files. Two models cover everything:
   by request handling.
 """
 
+from decimal import Decimal, InvalidOperation
+
+from django.core.exceptions import ValidationError
 from django.db import models
 
 # Project-scoped inventory access.
@@ -30,6 +33,34 @@ class Project(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.code})"
+
+
+class AIImportSettings(models.Model):
+    project = models.OneToOneField(
+        Project, on_delete=models.CASCADE, related_name="ai_import_settings"
+    )
+    excluded_codes = models.JSONField(default=list)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name_plural = "AI import settings"
+
+
+class AIObservedCode(models.Model):
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE, related_name="ai_observed_codes"
+    )
+    code = models.CharField(max_length=200)
+    occurrence_count = models.PositiveIntegerField(default=0)
+    last_seen_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["code"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["project", "code"], name="unique_project_ai_observed_code"
+            )
+        ]
 
 
 class RegistrationApproval(models.Model):
@@ -62,6 +93,62 @@ class InventorySection(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class FrameRangeAssignment(models.Model):
+    project = models.ForeignKey(
+        Project, on_delete=models.CASCADE, related_name="frame_range_assignments"
+    )
+    user = models.ForeignKey(
+        "auth.User", on_delete=models.CASCADE, related_name="inventory_frame_ranges"
+    )
+    start_frame = models.PositiveIntegerField()
+    end_frame = models.PositiveIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["project", "start_frame", "end_frame", "user__username"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(start_frame__lte=models.F("end_frame")),
+                name="frame_range_start_lte_end",
+            ),
+            models.UniqueConstraint(
+                fields=["project", "user", "start_frame", "end_frame"],
+                name="unique_project_user_frame_range",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["project", "user", "start_frame", "end_frame"],
+                name="frame_range_lookup_idx",
+            )
+        ]
+
+    def clean(self):
+        super().clean()
+        if self.start_frame is not None and self.end_frame is not None:
+            if self.start_frame > self.end_frame:
+                raise ValidationError("The start frame must be less than or equal to the end frame.")
+        if (
+            self.project_id and self.user_id
+            and self.start_frame is not None and self.end_frame is not None
+        ):
+            if not self.project.members.filter(pk=self.user_id).exists():
+                raise ValidationError({"user": "Assign the user to this project before adding a frame range."})
+            overlaps = type(self).objects.filter(
+                project_id=self.project_id,
+                start_frame__lte=self.end_frame,
+                end_frame__gte=self.start_frame,
+            ).exclude(pk=self.pk)
+            if overlaps.exists():
+                raise ValidationError(
+                    "This range overlaps another assignment in the same project. "
+                    "Frames can only be assigned to one user."
+                )
+
+    def __str__(self):
+        return f"{self.project}: {self.start_frame}–{self.end_frame} → {self.user}"
 
 
 class DropdownOption(models.Model):
@@ -170,6 +257,8 @@ class TabRecord(models.Model):
     tab = models.CharField(max_length=20, db_index=True)
     tab_record_id = models.PositiveIntegerField()  # the per-tab sequential "ID" shown to users
     display_order = models.PositiveIntegerField(default=0, db_index=True)
+    is_ai_processed = models.BooleanField(default=False, db_index=True)
+    ai_frame = models.PositiveIntegerField(null=True, blank=True, db_index=True)
     data = models.JSONField(default=dict)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -181,6 +270,10 @@ class TabRecord(models.Model):
             models.Index(fields=["tab", "tab_record_id"]),
             models.Index(fields=["owner", "tab"], name="inventory_owner_tab_idx"),
             models.Index(fields=["project", "tab"], name="inventory_project_tab_idx"),
+            models.Index(
+                fields=["project", "tab", "is_ai_processed", "ai_frame"],
+                name="inventory_ai_frame_idx",
+            ),
         ]
 
     def as_row(self, include_owner=False):
@@ -193,6 +286,17 @@ class TabRecord(models.Model):
         return row
 
     def save(self, *args, **kwargs):
+        if (self.data or {}).get("_AI_PROCESSED"):
+            self.is_ai_processed = True
+            try:
+                frame = Decimal(str((self.data or {}).get("FRAME", "")).strip())
+                self.ai_frame = (
+                    int(frame)
+                    if frame >= 0 and frame == frame.to_integral_value()
+                    else None
+                )
+            except (InvalidOperation, ValueError):
+                self.ai_frame = None
         if not self.display_order and self.project_id and self.tab:
             current_max = (
                 type(self).objects.filter(project_id=self.project_id, tab=self.tab)

@@ -85,6 +85,7 @@ DATABASES = {
         # per-tab locks already serialize writes within this process, but
         # this is cheap extra insurance at a 50-user scale.
         "OPTIONS": {"timeout": 20},
+        "CONN_MAX_AGE": int(os.environ.get("DJANGO_DB_CONN_MAX_AGE", "60")),
     }
 }
 
@@ -161,7 +162,12 @@ LOGOUT_REDIRECT_URL = "login"
 # Django's former two-week default.
 SESSION_COOKIE_AGE = int(os.environ.get("DJANGO_SESSION_COOKIE_AGE", str(8 * 60 * 60)))
 SESSION_EXPIRE_AT_BROWSER_CLOSE = env_bool("DJANGO_SESSION_EXPIRE_AT_BROWSER_CLOSE", True)
-SESSION_SAVE_EVERY_REQUEST = True
+# SessionExpiryMiddleware refreshes activity at a controlled interval. Saving
+# every request turns read-only API calls into serialized SQLite writes.
+SESSION_SAVE_EVERY_REQUEST = False
+SESSION_ACTIVITY_UPDATE_INTERVAL = int(
+    os.environ.get("DJANGO_SESSION_ACTIVITY_UPDATE_INTERVAL", "60")
+)
 
 # Password-reset email delivery. The console backend is safe for local
 # development: it prints the reset link in the server terminal. Set

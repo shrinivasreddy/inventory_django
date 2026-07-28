@@ -16,9 +16,13 @@ from django.utils import timezone
 from openpyxl import Workbook, load_workbook
 from PIL import Image
 
+from .forms import FrameRangeAssignmentForm
 from .middleware import LAST_ACTIVITY_KEY
 from .models import (
+    AIImportSettings,
+    AIObservedCode,
     DropdownOption,
+    FrameRangeAssignment,
     InventorySection,
     MutcdClassification,
     MutcdFallback,
@@ -27,6 +31,405 @@ from .models import (
     RegistrationApproval,
     TabRecord,
 )
+
+
+class AIProcessedRecordTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            "ai-admin", "ai-admin@example.com", "StrongPass!234"
+        )
+        self.user = User.objects.create_user("ai-user", password="StrongPass!234")
+        self.project = Project.objects.create(name="AI Project", code="ai-project")
+        self.project.members.add(self.user)
+
+    def select_project(self):
+        session = self.client.session
+        session["inventory_project_id"] = self.project.pk
+        session.save()
+
+    def test_admin_csv_upload_filters_placeholders_and_persists_valid_rows(self):
+        self.client.force_login(self.admin)
+        self.select_project()
+        content = (
+            "Frame,Latitude,Longitude,Elevation,IMAGE,CODE\n"
+            "1,37.1,-122.1,10,/uploads/images/sign_inventory/1/sign.jpg,W13-1P\n"
+            "2,37.2,-122.2,11,blank.jpg,NULL\n"
+            "3,37.3,-122.3,12,notsign.jpg,NOT SIGN\n"
+            "4,37.4,-122.4,13,empty.jpg,\n"
+            "5,37.5,-122.5,14,other.jpg,OTHER\n"
+        ).encode()
+        response = self.client.post(
+            reverse("admin:inventory_tabrecord_import_ai_processed"),
+            {
+                "section": "sign", "excluded_codes": "NULL\nNOT SIGN\nOTHER",
+                "data_file": SimpleUploadedFile("detections.csv", content),
+            },
+        )
+        self.assertRedirects(response, reverse("admin:inventory_tabrecord_changelist"))
+        self.assertEqual(TabRecord.objects.count(), 1)
+        detection = TabRecord.objects.get()
+        self.assertEqual(detection.data["MUTCD"], "W13-1P")
+        self.assertEqual(detection.data["FRAME"], "1")
+        self.assertEqual(detection.data["AI_LATITUDE"], "37.1")
+        self.assertEqual(detection.data["IMAGE"], "/uploads/images/sign_inventory/1/sign.jpg")
+        self.assertTrue(detection.data["_AI_PROCESSED"])
+        self.assertIsNone(detection.owner)
+        self.assertEqual(
+            set(AIObservedCode.objects.filter(project=self.project).values_list("code", flat=True)),
+            {"W13-1P", "NULL", "NOT SIGN", "OTHER"},
+        )
+
+    def test_saved_defaults_are_project_specific_and_prefill_upload(self):
+        self.client.force_login(self.admin)
+        self.select_project()
+        settings_response = self.client.get(
+            reverse("admin:inventory_tabrecord_ai_filter_settings")
+        )
+        self.assertContains(settings_response, "NULL")
+        self.assertContains(settings_response, "NOT SIGN")
+        self.assertContains(settings_response, "OTHER")
+        upload_response = self.client.get(
+            reverse("admin:inventory_tabrecord_import_ai_processed")
+        )
+        self.assertContains(upload_response, "NULL")
+        self.assertContains(upload_response, "Changes here do not update the saved default")
+
+    def test_admin_can_save_history_picker_and_manual_default_values(self):
+        AIObservedCode.objects.create(
+            project=self.project, code="R1-1", occurrence_count=3
+        )
+        AIObservedCode.objects.create(
+            project=self.project, code="OTHER", occurrence_count=5
+        )
+        self.client.force_login(self.admin)
+        self.select_project()
+        response = self.client.post(
+            reverse("admin:inventory_tabrecord_ai_filter_settings"),
+            {"historical_codes": ["OTHER"], "manual_codes": "NULL\nCUSTOM"},
+        )
+        self.assertRedirects(response, reverse("admin:inventory_tabrecord_ai_filter_settings"))
+        settings_row = AIImportSettings.objects.get(project=self.project)
+        self.assertEqual(settings_row.excluded_codes, ["CUSTOM", "NULL", "OTHER"])
+
+    def test_per_upload_override_does_not_change_saved_default(self):
+        self.client.force_login(self.admin)
+        self.select_project()
+        content = "Frame,Latitude,Longitude,IMAGE,TEXT,CODE\n1,1,2,x.png,x,OTHER\n".encode()
+        response = self.client.post(
+            reverse("admin:inventory_tabrecord_import_ai_processed"),
+            {
+                "section": "sign", "excluded_codes": "NULL\nNOT SIGN",
+                "data_file": SimpleUploadedFile("override.csv", content),
+            },
+        )
+        self.assertRedirects(response, reverse("admin:inventory_tabrecord_changelist"))
+        self.assertEqual(TabRecord.objects.get().data["MUTCD"], "OTHER")
+        self.assertEqual(
+            AIImportSettings.objects.get(project=self.project).excluded_codes,
+            ["NULL", "NOT SIGN", "OTHER"],
+        )
+
+    def test_ai_upload_updates_only_on_exact_five_field_match(self):
+        existing = TabRecord.objects.create(
+            project=self.project,
+            owner=self.user,
+            tab="sign",
+            tab_record_id=7,
+            data={
+                "FRAME": "101", "X1": "10.123456", "X2": "20.5",
+                "ELEVATION": "8.0001", "IMAGE": "frames/sign-101.png",
+                "MUTCD": "OLD", "WORD_DESCRIPTION": "Old text",
+                "STREET_NAME": "Preserve this manual value", "_AI_PROCESSED": True,
+            },
+        )
+        self.client.force_login(self.admin)
+        self.select_project()
+        upload_url = reverse("admin:inventory_tabrecord_import_ai_processed")
+
+        exact = (
+            "Frame,X1,X2,Elevation,IMAGE,CODE,TEXT,Latitude,Longitude\n"
+            "101,10.123456,20.5,8.0001,frames/sign-101.png,W13-1P,Updated text,1,2\n"
+        ).encode()
+        response = self.client.post(upload_url, {
+            "section": "sign", "excluded_codes": "NULL\nNOT SIGN\nOTHER",
+            "data_file": SimpleUploadedFile("exact.csv", exact),
+        })
+        self.assertRedirects(response, reverse("admin:inventory_tabrecord_changelist"))
+        self.assertEqual(TabRecord.objects.filter(project=self.project).count(), 1)
+        existing.refresh_from_db()
+        self.assertEqual(existing.data["MUTCD"], "W13-1P")
+        self.assertEqual(existing.data["WORD_DESCRIPTION"], "Updated text")
+        self.assertEqual(existing.data["STREET_NAME"], "Preserve this manual value")
+
+        tiny_difference = (
+            "Frame,X1,X2,Elevation,IMAGE,CODE,TEXT,Latitude,Longitude\n"
+            "101,10.1234561,20.5,8.0001,frames/sign-101.png,W13-1P,New row,1,2\n"
+        ).encode()
+        response = self.client.post(upload_url, {
+            "section": "sign", "excluded_codes": "NULL\nNOT SIGN\nOTHER",
+            "data_file": SimpleUploadedFile("different.csv", tiny_difference),
+        })
+        self.assertRedirects(response, reverse("admin:inventory_tabrecord_changelist"))
+        self.assertEqual(TabRecord.objects.filter(project=self.project).count(), 2)
+        self.assertTrue(
+            TabRecord.objects.filter(project=self.project).exclude(pk=existing.pk).filter(
+                data__X1="10.1234561"
+            ).exists()
+        )
+
+    def test_admin_reference_list_is_limited_to_selected_project(self):
+        other_project = Project.objects.create(name="Hidden AI Project", code="hidden-ai")
+        visible = TabRecord.objects.create(
+            project=self.project, tab="sign", tab_record_id=1,
+            data={"MUTCD": "VISIBLE-CODE", "_AI_PROCESSED": True}
+        )
+        TabRecord.objects.create(
+            project=other_project, tab="sign", tab_record_id=2,
+            data={"MUTCD": "HIDDEN-CODE", "_AI_PROCESSED": True}
+        )
+        self.client.force_login(self.admin)
+        self.select_project()
+        response = self.client.get(reverse("api_ai_processed_records", args=["sign"]))
+        self.assertEqual([row["ID"] for row in response.json()["records"]], [visible.tab_record_id])
+
+    def test_ai_api_is_project_scoped_and_inventory_save_links_source_fields(self):
+        FrameRangeAssignment.objects.create(
+            project=self.project, user=self.user, start_frame=8, end_frame=8
+        )
+        detection = TabRecord.objects.create(
+            project=self.project, tab="sign", tab_record_id=8,
+            data={
+                "LATITUDE": "37.12345678", "LONGITUDE": "-122.12345678",
+                "ELEVATION": "15", "IMAGE": "signals/8.jpg", "MUTCD": "W13-1P",
+                "WORD_DESCRIPTION": "10 MPH", "FRAME": "8", "TIME": "0.1",
+                "X1": "1", "Y1": "2", "X2": "3", "Y2": "4",
+                "_AI_PROCESSED": True,
+            },
+        )
+        other_project = Project.objects.create(name="Other AI", code="other-ai")
+        TabRecord.objects.create(
+            project=other_project, tab="sign", tab_record_id=9,
+            data={"MUTCD": "R1-1", "_AI_PROCESSED": True}
+        )
+        self.client.force_login(self.user)
+        self.select_project()
+        api_response = self.client.get(reverse("api_ai_processed_records", args=["sign"]))
+        self.assertEqual(api_response.status_code, 200)
+        self.assertEqual([row["ID"] for row in api_response.json()["records"]], [8])
+
+        save_response = self.client.put(
+            reverse("api_record_detail", args=["sign", 8]),
+            data=json.dumps({
+                "row": {
+                    "ST_ID": "100", "POLE_ID": "P1", "SIGN": "S1",
+                    "LATITUDE": "37.12345678", "LONGITUDE": "-122.12345678",
+                    "MUTCD": "W13-1P", "WORD_DESCRIPTION": "10 MPH",
+                },
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(save_response.status_code, 200)
+        stored = TabRecord.objects.get(project=self.project)
+        self.assertEqual(stored.data["LATITUDE"], "37.1234568")
+        self.assertEqual(stored.data["LONGITUDE"], "-122.1234568")
+        self.assertEqual(stored.data["MUTCD"], "W13-1P")
+        self.assertEqual(stored.data["FRAME"], "8")
+        self.assertEqual(stored.data["IMAGE"], "signals/8.jpg")
+        self.assertEqual(stored.owner, self.user)
+
+    def test_inventory_page_exposes_ai_processed_mode(self):
+        self.client.force_login(self.user)
+        self.select_project()
+        response = self.client.get(reverse("home"))
+        self.assertContains(response, "AI Processed")
+        self.assertContains(response, "aiDisplayColumns")
+        self.assertContains(response, "loadAIProcessedRecords")
+
+    def test_admin_navigation_always_exposes_ai_upload(self):
+        self.client.force_login(self.admin)
+        self.select_project()
+        upload_url = reverse("admin:inventory_tabrecord_import_ai_processed")
+
+        dashboard = self.client.get(reverse("admin:index"))
+        self.assertContains(dashboard, "Upload AI Processed")
+        self.assertContains(dashboard, upload_url)
+
+        records = self.client.get(reverse("admin:inventory_tabrecord_changelist"))
+        self.assertContains(records, "Import AI Processed")
+        self.assertContains(records, upload_url)
+
+    def test_standard_export_excludes_ai_only_fields(self):
+        FrameRangeAssignment.objects.create(
+            project=self.project, user=self.user, start_frame=10, end_frame=10
+        )
+        TabRecord.objects.create(
+            project=self.project, owner=self.user, tab="sign", tab_record_id=1,
+            data={
+                "ST_ID": "1", "FRAME": "10", "TIME": "0.2", "X1": "1",
+                "ELEVATION": "3", "IMAGE": "signals/10.png", "_AI_PROCESSED": True,
+            },
+        )
+        self.client.force_login(self.user)
+        self.select_project()
+        response = self.client.get(reverse("api_export", args=["sign"]))
+        workbook = load_workbook(io.BytesIO(response.content), read_only=True)
+        headers = [cell.value for cell in next(workbook.active.iter_rows(min_row=1, max_row=1))]
+        for field in ("FRAME", "TIME", "X1", "Y1", "X2", "Y2", "AI_LATITUDE", "AI_LONGITUDE", "ELEVATION", "IMAGE"):
+            self.assertNotIn(field, headers)
+        self.assertIn("MUTCD", headers)
+        self.assertIn("WORD_DESCRIPTION", headers)
+
+
+class FrameRangeAccessTests(TestCase):
+    def setUp(self):
+        self.admin = User.objects.create_superuser(
+            "range-admin", "range-admin@example.com", "StrongPass!234"
+        )
+        self.user = User.objects.create_user("range-user", password="StrongPass!234")
+        self.other = User.objects.create_user("other-user", password="StrongPass!234")
+        self.project = Project.objects.create(name="Range Project", code="range-project")
+        self.project.members.add(self.user, self.other)
+        FrameRangeAssignment.objects.create(
+            project=self.project, user=self.user, start_frame=1, end_frame=50
+        )
+        FrameRangeAssignment.objects.create(
+            project=self.project, user=self.user, start_frame=200, end_frame=250
+        )
+        self.own_manual = self.record(1, self.user, {})
+        self.other_manual = self.record(2, self.other, {})
+        self.assigned_low = self.record(3, None, {"FRAME": "25", "_AI_PROCESSED": True})
+        self.assigned_high = self.record(4, None, {"FRAME": "225", "_AI_PROCESSED": True})
+        self.unassigned = self.record(5, None, {"FRAME": "100", "_AI_PROCESSED": True})
+
+    def record(self, record_id, owner, data):
+        return TabRecord.objects.create(
+            project=self.project, owner=owner, tab="sign",
+            tab_record_id=record_id, data=data,
+        )
+
+    def select_project(self):
+        session = self.client.session
+        session["inventory_project_id"] = self.project.pk
+        session.save()
+
+    def test_user_sees_own_manual_records_and_all_assigned_ranges_only(self):
+        self.client.force_login(self.user)
+        self.select_project()
+
+        records = self.client.get(reverse("api_records", args=["sign"])).json()["records"]
+        self.assertEqual({row["ID"] for row in records}, {1, 3, 4})
+        self.assertTrue(all(row["_CAN_EDIT"] for row in records))
+
+        ai_records = self.client.get(
+            reverse("api_ai_processed_records", args=["sign"])
+        ).json()["records"]
+        self.assertEqual({row["ID"] for row in ai_records}, {3, 4})
+        self.assertTrue(all(row["_CAN_EDIT"] for row in ai_records))
+
+    def test_editing_assigned_ai_record_updates_in_place(self):
+        self.client.force_login(self.user)
+        self.select_project()
+        original_pk = self.assigned_low.pk
+        original_count = TabRecord.objects.count()
+
+        response = self.client.put(
+            reverse("api_record_detail", args=["sign", self.assigned_low.tab_record_id]),
+            data=json.dumps({
+                "row": {
+                    "ST_ID": "25", "STREET_NAME": "Updated Street",
+                    "POLE_ID": "P25", "SIGN": "S1",
+                }
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(TabRecord.objects.count(), original_count)
+        updated = TabRecord.objects.get(pk=original_pk)
+        self.assertEqual(updated.data["STREET_NAME"], "Updated Street")
+        self.assertEqual(updated.owner, self.user)
+
+        home = self.client.get(reverse("home"))
+        self.assertContains(home, "Record ' + editingId + ' is open for editing")
+        self.assertContains(home, "Use Update to save changes to this existing record")
+
+    def test_user_can_delete_assigned_ai_but_not_out_of_range_ai(self):
+        self.client.force_login(self.user)
+        self.select_project()
+
+        allowed = self.client.delete(
+            reverse("api_record_detail", args=["sign", self.assigned_low.tab_record_id])
+        )
+        self.assertEqual(allowed.status_code, 200)
+        self.assertFalse(TabRecord.objects.filter(pk=self.assigned_low.pk).exists())
+
+        blocked = self.client.delete(
+            reverse("api_record_detail", args=["sign", self.unassigned.tab_record_id])
+        )
+        self.assertEqual(blocked.status_code, 404)
+        self.assertTrue(TabRecord.objects.filter(pk=self.unassigned.pk).exists())
+
+    def test_admin_sees_every_record_and_assignment_status(self):
+        self.client.force_login(self.admin)
+        self.select_project()
+
+        records = self.client.get(reverse("api_records", args=["sign"])).json()["records"]
+        self.assertEqual({row["ID"] for row in records}, {1, 2, 3, 4, 5})
+
+        ai_records = self.client.get(
+            reverse("api_ai_processed_records", args=["sign"])
+        ).json()["records"]
+        statuses = {row["ID"]: row["ASSIGNMENT_STATUS"] for row in ai_records}
+        self.assertEqual(statuses[3], "range-user")
+        self.assertEqual(statuses[4], "range-user")
+        self.assertEqual(statuses[5], "Not Assigned")
+
+    def test_project_admin_page_exposes_multiple_frame_range_rows(self):
+        self.client.force_login(self.admin)
+        response = self.client.get(
+            reverse("admin:inventory_project_change", args=[self.project.pk])
+        )
+        self.assertContains(response, "Frame range assignments")
+        self.assertContains(response, "range-user")
+        self.assertContains(response, "200")
+        self.assertContains(response, "250")
+
+        dashboard = self.client.get(reverse("admin:index"))
+        add_url = reverse("admin:inventory_framerangeassignment_add")
+        self.assertContains(dashboard, add_url)
+        add_page = self.client.get(add_url)
+        self.assertContains(add_page, "Add frame range assignment")
+        self.assertContains(add_page, 'id="id_project"')
+        self.assertContains(add_page, "inventory/js/frame-range-assignment")
+
+        options = self.client.get(
+            reverse("admin:inventory_framerangeassignment_available_options"),
+            {"project_id": self.project.pk},
+        ).json()
+        self.assertEqual(options["frames"], [100])
+        self.assertEqual(
+            {item["label"] for item in options["users"]},
+            {"range-user", "other-user"},
+        )
+
+    def test_frame_dropdowns_offer_only_unassigned_ai_frames(self):
+        form = FrameRangeAssignmentForm(project=self.project)
+        start_values = [str(value) for value, _label in form.fields["start_frame"].choices]
+        end_values = [str(value) for value, _label in form.fields["end_frame"].choices]
+        self.assertEqual(start_values, ["", "100"])
+        self.assertEqual(end_values, ["", "100"])
+
+        assigned = FrameRangeAssignmentForm(
+            data={"user": self.other.pk, "start_frame": "100", "end_frame": "100"},
+            project=self.project,
+        )
+        self.assertTrue(assigned.is_valid(), assigned.errors)
+        assigned.save()
+
+        refreshed = FrameRangeAssignmentForm(project=self.project)
+        self.assertEqual(
+            [str(value) for value, _label in refreshed.fields["start_frame"].choices],
+            [""],
+        )
 
 
 class InventoryImageTests(TestCase):
@@ -240,7 +643,8 @@ class AuthenticationTests(TestCase):
     def test_session_timeout_defaults_are_security_focused(self):
         self.assertEqual(settings.SESSION_COOKIE_AGE, 8 * 60 * 60)
         self.assertTrue(settings.SESSION_EXPIRE_AT_BROWSER_CLOSE)
-        self.assertTrue(settings.SESSION_SAVE_EVERY_REQUEST)
+        self.assertFalse(settings.SESSION_SAVE_EVERY_REQUEST)
+        self.assertEqual(settings.SESSION_ACTIVITY_UPDATE_INTERVAL, 60)
 
     @override_settings(SESSION_COOKIE_AGE=3600)
     def test_inactive_session_is_rejected(self):
@@ -1540,23 +1944,26 @@ class ProjectAccessTests(TestCase):
             ["A"],
         )
 
-    def test_admin_view_all_records_is_grouped_by_project(self):
+    def test_admin_view_all_records_groups_the_selected_project(self):
         self.client.force_login(self.admin)
         response = self.client.get(reverse("admin:inventory_tabrecord_changelist"))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'data-project-groups="2"')
+        self.assertContains(response, 'data-project-groups="1"')
         self.assertContains(response, "Alpha")
-        self.assertContains(response, "Beta")
-        self.assertContains(response, "Sign Inventory: 1", count=2)
-        self.assertEqual(len(response.context["project_groups"]), 2)
+        self.assertNotContains(response, "Beta")
+        self.assertContains(response, "Sign Inventory: 1", count=1)
+        self.assertEqual(len(response.context["project_groups"]), 1)
 
-        filtered = self.client.get(
-            reverse("admin:inventory_tabrecord_changelist"),
-            {"q": "other-project-user"},
+        switched = self.client.post(
+            reverse("api_select_project"),
+            data=json.dumps({"project_id": self.beta.pk}),
+            content_type="application/json",
         )
-        self.assertContains(filtered, 'data-project-groups="1"')
-        self.assertContains(filtered, "Beta")
-        self.assertNotContains(filtered, "Alpha")
+        self.assertEqual(switched.status_code, 200)
+        beta_response = self.client.get(reverse("admin:inventory_tabrecord_changelist"))
+        self.assertContains(beta_response, 'data-project-groups="1"')
+        self.assertContains(beta_response, "Beta")
+        self.assertNotContains(beta_response, "Alpha")
 
     def test_project_admin_loads_individual_member_removal_control(self):
         self.client.force_login(self.admin)

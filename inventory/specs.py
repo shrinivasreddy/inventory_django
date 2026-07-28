@@ -12,6 +12,11 @@ from .models import (
 )
 
 TAB_ORDER = ["sign", "pavement", "lane", "curb"]
+SIGN_AI_EXTRA_FIELDS = [
+    "FRAME", "TIME", "X1", "Y1", "X2", "Y2",
+    "AI_LATITUDE", "AI_LONGITUDE", "ELEVATION", "IMAGE",
+]
+AI_MARKER_FIELD = "_AI_PROCESSED"
 
 
 def get_spec(key):

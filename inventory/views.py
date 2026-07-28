@@ -12,7 +12,7 @@ from django.contrib.auth.password_validation import get_default_password_validat
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import F, Max
+from django.db.models import F, Max, Q
 from django.http import FileResponse, JsonResponse, HttpResponseNotAllowed, HttpResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -24,6 +24,7 @@ from openpyxl.utils import get_column_letter
 from .models import (
     AutoFillMapping,
     DropdownOption,
+    FrameRangeAssignment,
     MutcdClassification,
     MutcdMapping,
     Project,
@@ -40,6 +41,8 @@ from .image_storage import (
     save_record_image,
 )
 from .specs import (
+    AI_MARKER_FIELD,
+    SIGN_AI_EXTRA_FIELDS,
     TAB_ORDER,
     compute_auto_fields,
     get_section_state,
@@ -146,12 +149,39 @@ def visible_tab_records(request, key):
         tab=key, project=project
     ).select_related("owner", "project")
     if not request.user.is_staff:
-        records = records.filter(owner=request.user)
+        visibility = Q(owner=request.user, is_ai_processed=False)
+        ranges = FrameRangeAssignment.objects.filter(
+            project=project, user=request.user
+        ).values_list("start_frame", "end_frame")
+        for start_frame, end_frame in ranges:
+            visibility |= Q(
+                is_ai_processed=True,
+                ai_frame__gte=start_frame,
+                ai_frame__lte=end_frame,
+            )
+        records = records.filter(visibility)
     return records
 
 
 def can_modify_record(request, record):
-    return request.user.is_staff or record.owner_id == request.user.id
+    if request.user.is_staff or record.owner_id == request.user.id:
+        return True
+    if not record.is_ai_processed or record.ai_frame is None:
+        return False
+    ranges_by_project = getattr(request, "_inventory_frame_ranges_cache", None)
+    if ranges_by_project is None:
+        ranges_by_project = {}
+        request._inventory_frame_ranges_cache = ranges_by_project
+    if record.project_id not in ranges_by_project:
+        ranges_by_project[record.project_id] = list(
+            FrameRangeAssignment.objects.filter(
+                project_id=record.project_id, user=request.user
+            ).values_list("start_frame", "end_frame")
+        )
+    return any(
+        start <= record.ai_frame <= end
+        for start, end in ranges_by_project[record.project_id]
+    )
 
 
 def record_api_row(request, record):
@@ -449,6 +479,34 @@ def api_records(request, key):
     return HttpResponseNotAllowed(["GET", "POST", "DELETE"])
 
 
+@api_login_required
+@require_GET
+def api_ai_processed_records(request, key):
+    if key not in TAB_ORDER:
+        return JsonResponse({"error": "Unknown tab"}, status=404)
+    project, project_error = require_selected_project(request)
+    if project_error:
+        return project_error
+    records = visible_tab_records(request, key).filter(is_ai_processed=True)
+    records = records.order_by("display_order", "tab_record_id")
+    assignments = list(
+        FrameRangeAssignment.objects.filter(project=project).select_related("user")
+    ) if request.user.is_staff else []
+    rows = []
+    for record in records:
+        row = record_api_row(request, record)
+        if request.user.is_staff:
+            assigned_users = [
+                assignment.user.get_full_name().strip() or assignment.user.username
+                for assignment in assignments
+                if record.ai_frame is not None
+                and assignment.start_frame <= record.ai_frame <= assignment.end_frame
+            ]
+            row["ASSIGNMENT_STATUS"] = ", ".join(assigned_users) or "Not Assigned"
+        rows.append(row)
+    return JsonResponse({"records": rows})
+
+
 # ---------------------------------------------------------------------------
 # Single record: PUT (update) / DELETE
 # ---------------------------------------------------------------------------
@@ -479,8 +537,10 @@ def api_record_detail(request, key, rec_id):
             try:
                 rec = visible_tab_records(request, key).get(tab_record_id=rec_id)
             except TabRecord.DoesNotExist:
+                project = selected_project(request)
                 return JsonResponse({"error": "Record not found"}, status=404)
-            if not can_modify_record(request, rec):
+            is_unassigned_ai = rec.owner_id is None and rec.is_ai_processed
+            if not can_modify_record(request, rec) and not is_unassigned_ai:
                 return JsonResponse(
                     {"error": "Only the creator can edit this record."}, status=403
                 )
@@ -488,6 +548,11 @@ def api_record_detail(request, key, rec_id):
             # Image links are generated only by the upload endpoint. Preserve
             # the existing value during normal record edits.
             row["IMAGE_LINK"] = str(rec.data.get("IMAGE_LINK", "") or "")
+            if key == "sign" and rec.is_ai_processed:
+                for field in SIGN_AI_EXTRA_FIELDS:
+                    row[field] = rec.data.get(field, "")
+                row[AI_MARKER_FIELD] = True
+                row["_AI_SOURCE_FILE"] = rec.data.get("_AI_SOURCE_FILE", "")
 
             ts_dict = get_section_state(key)
             row = compute_auto_fields(key, row, ts_dict)
@@ -498,7 +563,12 @@ def api_record_detail(request, key, rec_id):
             try:
                 with transaction.atomic():
                     rec.data = row
-                    rec.save(update_fields=["data", "updated_at"])
+                    if is_unassigned_ai:
+                        rec.owner = request.user
+                    update_fields = ["data", "updated_at"]
+                    if is_unassigned_ai:
+                        update_fields.append("owner")
+                    rec.save(update_fields=update_fields)
             except Exception:
                 return JsonResponse({"error": "Failed to save the record to the database."}, status=500)
             return JsonResponse({"record": record_api_row(request, rec)})

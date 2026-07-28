@@ -59,11 +59,16 @@ class SessionExpiryMiddleware:
                 request.session.flush()
                 request.user = AnonymousUser()
             else:
-                request.session[LAST_ACTIVITY_KEY] = now_timestamp
+                # Avoid a database session write for every API request. A
+                # once-per-minute refresh preserves inactivity semantics while
+                # allowing concurrent read traffic to remain read-only.
+                try:
+                    activity_age = now_timestamp - int(last_activity or 0)
+                except (TypeError, ValueError):
+                    activity_age = settings.SESSION_ACTIVITY_UPDATE_INTERVAL
+                if activity_age >= settings.SESSION_ACTIVITY_UPDATE_INTERVAL:
+                    request.session[LAST_ACTIVITY_KEY] = now_timestamp
 
         response = self.get_response(request)
-
-        if getattr(request, "user", None) is not None and request.user.is_authenticated:
-            request.session[LAST_ACTIVITY_KEY] = int(timezone.now().timestamp())
 
         return response

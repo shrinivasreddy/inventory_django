@@ -1,6 +1,9 @@
 import io
 import json
+import csv
+from collections import Counter
 from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from zipfile import BadZipFile
 
 from django.contrib import admin
@@ -10,7 +13,8 @@ from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 from django.contrib.auth.forms import ReadOnlyPasswordHashWidget, UserChangeForm
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import IntegrityError, transaction
-from django.db.models import Max
+from django.db.models import F, Max
+from django.forms.models import BaseInlineFormSet
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import path, reverse
@@ -21,12 +25,18 @@ from openpyxl.utils.exceptions import InvalidFileException
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-from .forms import ConfigurationExcelImportForm, InventoryExcelImportForm
+from .forms import (
+    AIExclusionSettingsForm, AIProcessedImportForm, ConfigurationExcelImportForm,
+    FrameRangeAssignmentForm, InventoryExcelImportForm,
+)
 from .concurrency import section_write_locks
 from .excel_security import safe_excel_cell
 from .models import (
     AutoFillMapping,
+    AIImportSettings,
+    AIObservedCode,
     DropdownOption,
+    FrameRangeAssignment,
     InventorySection,
     MutcdClassification,
     MutcdFallback,
@@ -35,13 +45,34 @@ from .models import (
     RegistrationApproval,
     TabRecord,
 )
-from .specs import TAB_ORDER, compute_auto_fields, get_section_state, get_spec, missing_required_fields
+from .specs import (
+    AI_MARKER_FIELD, SIGN_AI_EXTRA_FIELDS, TAB_ORDER, compute_auto_fields,
+    get_section_state, get_spec, missing_required_fields,
+)
 from .signals import send_account_approved_email, send_account_deactivated_email, send_account_rejected_email
 
 admin.site.site_header = "Bluedome Inventory"
 admin.site.site_title = "Bluedome Inventory"
 admin.site.index_title = "Inventory Configuration"
 admin.site.site_url = "/"
+
+
+class FrameRangeAssignmentInlineFormSet(BaseInlineFormSet):
+    def get_form_kwargs(self, index):
+        kwargs = super().get_form_kwargs(index)
+        kwargs["project"] = self.instance
+        return kwargs
+
+
+class FrameRangeAssignmentInline(admin.TabularInline):
+    model = FrameRangeAssignment
+    form = FrameRangeAssignmentForm
+    formset = FrameRangeAssignmentInlineFormSet
+    extra = 1
+    fields = ("user", "start_frame", "end_frame")
+    autocomplete_fields = ("user",)
+    verbose_name = "Frame range assignment"
+    verbose_name_plural = "Frame range assignments"
 
 
 @admin.register(Project)
@@ -81,6 +112,7 @@ class ProjectAdmin(admin.ModelAdmin):
             },
         ),
     )
+    inlines = (FrameRangeAssignmentInline,)
 
     class Media:
         js = ("inventory/js/project-members.js",)
@@ -146,6 +178,69 @@ class ProjectAdmin(admin.ModelAdmin):
             '</span>',
             change_url, obj.name, delete_url, obj.name,
         )
+
+
+@admin.register(FrameRangeAssignment)
+class FrameRangeAssignmentAdmin(admin.ModelAdmin):
+    form = FrameRangeAssignmentForm
+    list_display = ("project", "user", "frame_range", "created_on")
+    list_filter = ("project", "user")
+    search_fields = ("project__name", "project__code", "user__username", "user__email")
+    ordering = ("project", "start_frame", "end_frame")
+
+    class Media:
+        js = ("inventory/js/frame-range-assignment.js",)
+
+    def get_urls(self):
+        return [
+            path(
+                "available-options/",
+                self.admin_site.admin_view(self.available_options),
+                name="inventory_framerangeassignment_available_options",
+            )
+        ] + super().get_urls()
+
+    def get_readonly_fields(self, request, obj=None):
+        return ("project",) if obj else ()
+
+    def available_options(self, request):
+        if not self.has_add_permission(request):
+            raise PermissionDenied
+        project = Project.objects.filter(pk=request.GET.get("project_id")).first()
+        if project is None:
+            return JsonResponse({"users": [], "frames": []})
+        assigned_ranges = list(
+            FrameRangeAssignment.objects.filter(project=project).values_list(
+                "start_frame", "end_frame"
+            )
+        )
+        frames = list(
+            TabRecord.objects.filter(
+                project=project,
+                is_ai_processed=True,
+                ai_frame__isnull=False,
+            )
+            .order_by("ai_frame")
+            .values_list("ai_frame", flat=True)
+            .distinct()
+        )
+        frames = [
+            frame for frame in frames
+            if not any(start <= frame <= end for start, end in assigned_ranges)
+        ]
+        users = [
+            {"id": user.pk, "label": user.get_full_name().strip() or user.username}
+            for user in project.members.order_by("username")
+        ]
+        return JsonResponse({"users": users, "frames": frames})
+
+    @admin.display(description="Frame range", ordering="start_frame")
+    def frame_range(self, obj):
+        return f"{obj.start_frame}–{obj.end_frame}"
+
+    @admin.display(description="Created", ordering="created_at")
+    def created_on(self, obj):
+        return timezone.localtime(obj.created_at).strftime("%m-%d-%Y")
 
 
 User = get_user_model()
@@ -881,6 +976,7 @@ class InventoryDateAddedFilter(admin.ListFilter):
 
 @admin.register(TabRecord)
 class TabRecordAdmin(admin.ModelAdmin):
+    AI_DUPLICATE_FIELDS = ("FRAME", "X1", "X2", "ELEVATION", "IMAGE")
     list_display = ("record_id", "username", "tab", "date_added")
     list_filter = (
         InventoryUsernameFilter,
@@ -902,7 +998,9 @@ class TabRecordAdmin(admin.ModelAdmin):
         return project
 
     def get_queryset(self, request):
-        return super().get_queryset(request).select_related("project", "owner")
+        queryset = super().get_queryset(request).select_related("project", "owner")
+        project = self._selected_project(request)
+        return queryset.filter(project=project) if project else queryset.none()
 
     def changelist_view(self, request, extra_context=None):
         """Render the filtered/paginated admin results grouped by project."""
@@ -972,6 +1070,16 @@ class TabRecordAdmin(admin.ModelAdmin):
                 self.admin_site.admin_view(self.excel_template),
                 name="inventory_tabrecord_excel_template",
             ),
+            path(
+                "import-ai-processed/",
+                self.admin_site.admin_view(self.import_ai_processed),
+                name="inventory_tabrecord_import_ai_processed",
+            ),
+            path(
+                "ai-filter-settings/",
+                self.admin_site.admin_view(self.ai_filter_settings),
+                name="inventory_tabrecord_ai_filter_settings",
+            ),
         ]
         return custom_urls + urls
 
@@ -985,6 +1093,21 @@ class TabRecordAdmin(admin.ModelAdmin):
             return str(int(value))
         return str(value).strip()
 
+    @classmethod
+    def _ai_duplicate_key(cls, data):
+        """Return the strict, non-rounded identity for an AI detection."""
+        return tuple(str(data.get(field, "")) for field in cls.AI_DUPLICATE_FIELDS)
+
+    @staticmethod
+    def _ai_frame_value(data):
+        try:
+            value = Decimal(str(data.get("FRAME", "")).strip())
+        except (InvalidOperation, ValueError):
+            return None
+        if value < 0 or value != value.to_integral_value():
+            return None
+        return int(value)
+
     @staticmethod
     def _style_sheet(ws, columns):
         header_fill = PatternFill("solid", fgColor="305496")
@@ -997,6 +1120,216 @@ class TabRecordAdmin(admin.ModelAdmin):
             ws.column_dimensions[get_column_letter(index)].width = max(14, min(35, len(column) + 4))
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = f"A1:{get_column_letter(len(columns))}1"
+
+    def _ai_rows(self, upload):
+        if upload.name.lower().endswith(".csv"):
+            text = upload.read().decode("utf-8-sig")
+            return list(csv.DictReader(io.StringIO(text)))
+        workbook = load_workbook(upload, read_only=True, data_only=True)
+        worksheet = workbook.active
+        values = worksheet.iter_rows(values_only=True)
+        headers = [self._excel_value(value).upper() for value in next(values, ())]
+        return [
+            {headers[index]: value for index, value in enumerate(row) if index < len(headers)}
+            for row in values
+        ]
+
+    def import_ai_processed(self, request):
+        if not request.user.is_staff:
+            raise PermissionDenied
+        project = self._selected_project(request)
+        if project is None:
+            messages.warning(request, "Select an active project first.")
+            return redirect("home")
+        settings_row, _ = AIImportSettings.objects.get_or_create(
+            project=project,
+            defaults={"excluded_codes": ["NULL", "NOT SIGN", "OTHER"]},
+        )
+        if request.method == "POST":
+            form = AIProcessedImportForm(request.POST, request.FILES)
+            if form.is_valid():
+                if form.cleaned_data["section"] != "sign":
+                    form.add_error("section", "Only Sign Inventory AI mapping is available currently.")
+                else:
+                    upload = form.cleaned_data["data_file"]
+                    try:
+                        source_rows = self._ai_rows(upload)
+                    except (UnicodeDecodeError, csv.Error, BadZipFile, InvalidFileException, OSError, ValueError):
+                        form.add_error("data_file", "The uploaded file could not be parsed.")
+                    else:
+                        observed = Counter()
+                        for raw_row in source_rows:
+                            normalized_source = {
+                                self._excel_value(key).upper(): self._excel_value(value)
+                                for key, value in raw_row.items() if key is not None
+                            }
+                            raw_code = normalized_source.get("CODE", "").strip().upper()
+                            if raw_code:
+                                observed[raw_code] += 1
+                        with transaction.atomic():
+                            for code, count in observed.items():
+                                history, _ = AIObservedCode.objects.get_or_create(
+                                    project=project, code=code,
+                                )
+                                AIObservedCode.objects.filter(pk=history.pk).update(
+                                    occurrence_count=F("occurrence_count") + count
+                                )
+                        exclusions = set(form.cleaned_data["excluded_codes"])
+                        spec = get_spec("sign")
+                        pending_rows = []
+                        filtered_count = 0
+                        for raw_row in source_rows:
+                            source = {
+                                self._excel_value(key).upper(): self._excel_value(value)
+                                for key, value in raw_row.items() if key is not None
+                            }
+                            code = source.get("CODE", "").strip()
+                            if not code or code.upper() in exclusions:
+                                filtered_count += 1
+                                continue
+                            data = {column: "" for column in spec["columns"] if column != "ID"}
+                            data["LATITUDE"] = source.get("LATITUDE", "")
+                            data["LONGITUDE"] = source.get("LONGITUDE", "")
+                            data["MUTCD"] = code
+                            text_value = source.get("TEXT", "")
+                            data["WORD_DESCRIPTION"] = "" if text_value.upper() == "NULL" else text_value
+                            for field in SIGN_AI_EXTRA_FIELDS:
+                                data[field] = source.get(field, "")
+                            data["AI_LATITUDE"] = source.get("LATITUDE", "")
+                            data["AI_LONGITUDE"] = source.get("LONGITUDE", "")
+                            data[AI_MARKER_FIELD] = True
+                            data["_AI_SOURCE_FILE"] = upload.name[:255]
+                            pending_rows.append(data)
+                        if not pending_rows:
+                            form.add_error(None, "No genuine detections remained after CODE filtering.")
+                        else:
+                            inserted_count = 0
+                            updated_count = 0
+                            with section_write_locks["sign"]:
+                                with transaction.atomic():
+                                    existing_by_key = {}
+                                    for record in TabRecord.objects.filter(
+                                        project=project, tab="sign"
+                                    ).only(
+                                        "pk", "data", "updated_at", "is_ai_processed", "ai_frame"
+                                    ):
+                                        if record.is_ai_processed:
+                                            existing_by_key.setdefault(
+                                                self._ai_duplicate_key(record.data or {}), record
+                                            )
+
+                                    new_by_key = {}
+                                    new_rows = []
+                                    changed_by_pk = {}
+                                    ai_update_fields = {
+                                        "LATITUDE", "LONGITUDE", "MUTCD", "WORD_DESCRIPTION",
+                                        "AI_LATITUDE", "AI_LONGITUDE", AI_MARKER_FIELD,
+                                        "_AI_SOURCE_FILE", *SIGN_AI_EXTRA_FIELDS,
+                                    }
+                                    for data in pending_rows:
+                                        key = self._ai_duplicate_key(data)
+                                        existing = existing_by_key.get(key)
+                                        if existing is not None:
+                                            merged = dict(existing.data or {})
+                                            merged.update({field: data.get(field, "") for field in ai_update_fields})
+                                            existing.data = merged
+                                            existing.is_ai_processed = True
+                                            existing.ai_frame = self._ai_frame_value(data)
+                                            existing.updated_at = timezone.now()
+                                            changed_by_pk[existing.pk] = existing
+                                            updated_count += 1
+                                            continue
+
+                                        if key in new_by_key:
+                                            # A later exact duplicate in the same file overrides
+                                            # the earlier row instead of creating a second record.
+                                            new_by_key[key].data = data
+                                            updated_count += 1
+                                            continue
+
+                                        record = TabRecord(
+                                            project=project, owner=None, tab="sign", data=data,
+                                            is_ai_processed=True,
+                                            ai_frame=self._ai_frame_value(data),
+                                        )
+                                        new_by_key[key] = record
+                                        new_rows.append(record)
+
+                                    if changed_by_pk:
+                                        TabRecord.objects.bulk_update(
+                                            changed_by_pk.values(),
+                                            ["data", "is_ai_processed", "ai_frame", "updated_at"],
+                                        )
+
+                                    max_id = TabRecord.objects.filter(tab="sign").aggregate(
+                                        value=Max("tab_record_id")
+                                    )["value"] or 0
+                                    max_order = TabRecord.objects.filter(
+                                        project=project, tab="sign"
+                                    ).aggregate(value=Max("display_order"))["value"] or 0
+                                    for offset, record in enumerate(new_rows, start=1):
+                                        record.tab_record_id = max_id + offset
+                                        record.display_order = max_order + offset
+                                    if new_rows:
+                                        TabRecord.objects.bulk_create(new_rows)
+                                    inserted_count = len(new_rows)
+                            self.message_user(
+                                request,
+                                f"AI import completed for {project.name}: inserted {inserted_count}, "
+                                f"updated {updated_count}; filtered {filtered_count} blank, NULL, "
+                                "NOT SIGN, or OTHER rows.",
+                                messages.SUCCESS,
+                            )
+                            return redirect("admin:inventory_tabrecord_changelist")
+        else:
+            form = AIProcessedImportForm(initial={
+                "section": "sign",
+                "excluded_codes": "\n".join(settings_row.excluded_codes),
+            })
+        return render(request, "admin/inventory/tabrecord/import_ai_processed.html", {
+            **self.admin_site.each_context(request), "title": "Import AI processed Sign records",
+            "form": form, "opts": self.model._meta, "project": project,
+            "settings_url": reverse("admin:inventory_tabrecord_ai_filter_settings"),
+        })
+
+    def ai_filter_settings(self, request):
+        if not request.user.is_staff:
+            raise PermissionDenied
+        project = self._selected_project(request)
+        if project is None:
+            messages.warning(request, "Select an active project first.")
+            return redirect("home")
+        settings_row, _ = AIImportSettings.objects.get_or_create(
+            project=project,
+            defaults={"excluded_codes": ["NULL", "NOT SIGN", "OTHER"]},
+        )
+        historical = list(
+            AIObservedCode.objects.filter(project=project).values_list("code", flat=True)
+        )
+        if request.method == "POST":
+            form = AIExclusionSettingsForm(
+                request.POST,
+                historical_codes=historical,
+                selected_codes=settings_row.excluded_codes,
+            )
+            if form.is_valid():
+                settings_row.excluded_codes = form.exclusion_codes()
+                settings_row.save(update_fields=["excluded_codes", "updated_at"])
+                self.message_user(request, "Default AI exclusion list updated.", messages.SUCCESS)
+                return redirect("admin:inventory_tabrecord_ai_filter_settings")
+        else:
+            form = AIExclusionSettingsForm(
+                historical_codes=historical,
+                selected_codes=settings_row.excluded_codes,
+            )
+        history_rows = AIObservedCode.objects.filter(project=project).order_by("code")
+        return render(request, "admin/inventory/tabrecord/ai_filter_settings.html", {
+            **self.admin_site.each_context(request),
+            "title": "AI exclusion filter settings", "form": form,
+            "opts": self.model._meta, "project": project,
+            "history_rows": history_rows,
+            "upload_url": reverse("admin:inventory_tabrecord_import_ai_processed"),
+        })
 
     def import_excel(self, request):
         if not self.has_add_permission(request):

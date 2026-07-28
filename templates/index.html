@@ -266,9 +266,14 @@
 </div>
 
 <div id="tabbar"></div>
+<div id="record-modebar" aria-label="Record source view"></div>
 
 <div id="layout">
   <div id="form-panel">
+    <button id="form-collapse-toggle" type="button" aria-controls="form-panel" aria-expanded="true" title="Collapse inventory form">
+      <span class="form-collapse-toggle__icon" aria-hidden="true">&#8249;</span>
+      <span class="sr-only">Collapse inventory form</span>
+    </button>
     <div class="form-panel-heading">
       <div>
         <span class="form-panel-eyebrow">Inventory entry</span>
@@ -399,6 +404,8 @@ function apiRequest(url, options) {
 
 var TABS = {{ tabs_json|safe }};
 var currentTabKey = TABS[0].key;
+var recordViewMode = 'inventory';
+var aiProcessedRecords = [];
 var projectSelector = document.getElementById('project-selector');
 var projectMenuTrigger = document.getElementById('project-menu-trigger');
 var projectMenu = document.getElementById('project-menu');
@@ -707,12 +714,33 @@ function buildTabBar() {
     btn.addEventListener('click', function () { switchTab(t.key); });
     bar.appendChild(btn);
   });
+  buildRecordModeBar();
+}
+
+function buildRecordModeBar() {
+  var bar = document.getElementById('record-modebar');
+  bar.innerHTML = '';
+  [
+    { key: 'inventory', label: 'Inventory Records' },
+    { key: 'ai', label: 'AI Processed' }
+  ].forEach(function (mode) {
+    var button = el('button', { type: 'button', text: mode.label });
+    if (recordViewMode === mode.key) button.classList.add('active');
+    button.addEventListener('click', function () {
+      recordViewMode = mode.key;
+      buildRecordModeBar();
+      buildTableHead();
+      if (recordViewMode === 'ai') loadAIProcessedRecords(); else renderTable();
+    });
+    bar.appendChild(button);
+  });
 }
 
 function switchTab(key) {
   saveCurrentDraft();
   pendingImageFile = null;
   currentTabKey = key;
+  recordViewMode = 'inventory';
   editingId = null;
   insertAfterId = null;
   buildTabBar();
@@ -1161,19 +1189,25 @@ function replaceLocalRecord(record) {
 }
 
 document.getElementById('add-btn').addEventListener('click', function () {
+  if (editingId !== null) {
+    setStatus('Record ' + editingId + ' is open for editing. Use Update to save changes.');
+    return;
+  }
   var requestedInsertAfterId = insertAfterId;
   apiRequest('/api/' + currentTabKey + '/records', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ row: collectRow(), insert_after_id: insertAfterId })
+    body: JSON.stringify({
+      row: collectRow(), insert_after_id: insertAfterId
+    })
   }).then(function (res) {
       if (!res.ok) { setStatus(res.data.error); return; }
       nextIdPreview = res.data.next_id;
       var savedRecord = res.data.record;
       return uploadRecordImage(savedRecord).then(function (finalRecord) {
-        if (requestedInsertAfterId === null) replaceLocalRecord(finalRecord);
+        if (requestedInsertAfterId === null && recordViewMode === 'inventory') replaceLocalRecord(finalRecord);
         setStatus('Record ' + finalRecord.ID + ' added.');
         clearForm(false);
-        if (requestedInsertAfterId !== null) loadRecords();
+        if (requestedInsertAfterId !== null && recordViewMode === 'inventory') loadRecords();
       }).catch(function (err) {
         // Creating the data row and storing its required image is one logical
         // operation. Compensate for a failed image upload by removing the new
@@ -1290,6 +1324,7 @@ function loadRecord(record) {
   }
   if (spec.mutcd_word_options) updateWordDescriptionChoices(getVal('MUTCD'));
   editingId = record.ID;
+  updateInsertMode();
   refreshAutoFields();
   if (autoEls['ID']) autoEls['ID'].textContent = String(record.ID);
   setRecordActionPermissions(record._CAN_EDIT === true, true);
@@ -1301,13 +1336,39 @@ function loadRecord(record) {
 function buildTableHead() {
   var tr = document.getElementById('table-head');
   tr.innerHTML = '';
+  if (recordViewMode === 'ai') {
+    aiDisplayColumns().forEach(function (column) {
+      tr.appendChild(el('th', { text: column.replace(/_/g, ' ') }));
+    });
+    return;
+  }
   tr.appendChild(el('th', { text: 'Insert', class: 'insert-action-heading' }));
   spec.columns.forEach(function (col) { tr.appendChild(el('th', { text: col.replace(/_/g, ' ') })); });
+}
+
+function aiDisplayColumns() {
+  var columns = spec.columns.slice();
+  if (currentTabKey === 'sign') {
+    ['FRAME', 'TIME', 'X1', 'Y1', 'X2', 'Y2', 'AI_LATITUDE', 'AI_LONGITUDE', 'ELEVATION', 'IMAGE'].forEach(function (field) {
+      if (columns.indexOf(field) === -1) columns.push(field);
+    });
+  }
+  if (spec.can_manage_configuration && columns.indexOf('ASSIGNMENT_STATUS') === -1) {
+    columns.push('ASSIGNMENT_STATUS');
+  }
+  return columns;
 }
 
 function updateInsertMode() {
   var addButton = document.getElementById('add-btn');
   if (!addButton) return;
+  if (editingId !== null) {
+    addButton.textContent = 'Editing ID ' + editingId;
+    addButton.disabled = true;
+    addButton.title = 'Use Update to save changes to this existing record';
+    return;
+  }
+  addButton.disabled = false;
   addButton.textContent = insertAfterId === null ? 'Add Record' : 'Insert Below ID ' + insertAfterId;
   addButton.title = insertAfterId === null
     ? 'Add this record at the end of the list'
@@ -1336,15 +1397,50 @@ function loadRecords() {
   }).catch(function (err) { setStatus(err.message); });
 }
 
+function loadAIProcessedRecords() {
+  apiRequest('/api/' + currentTabKey + '/ai-processed').then(function (res) {
+    if (!res.ok) throw new Error(res.data.error || 'Failed to load AI processed rows.');
+    aiProcessedRecords = res.data.records || [];
+    renderTable();
+  }).catch(function (error) { setStatus(error.message); });
+}
+
+function selectAIProcessedRecord(record) {
+  loadRecord(record);
+  setStatus(
+    'AI row selected (frame ' + (record.FRAME || 'not provided') + '). ' +
+    'AI fields are preserved in this Sign Inventory record; complete the manual fields and update.'
+  );
+  document.getElementById('form-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 function renderTable() {
   var query = document.getElementById('search-box').value.trim().toLowerCase();
   var body = document.getElementById('table-body');
   body.innerHTML = '';
 
-  var filtered = allRecords.filter(function (rec) {
+  var sourceRecords = recordViewMode === 'ai' ? aiProcessedRecords : allRecords;
+  var filtered = sourceRecords.filter(function (rec) {
     if (!query) return true;
-    return spec.columns.some(function (c) { return String(rec[c] || '').toLowerCase().includes(query); });
+    return Object.keys(rec).some(function (c) { return String(rec[c] || '').toLowerCase().includes(query); });
   });
+
+  if (recordViewMode === 'ai') {
+    filtered.forEach(function (rec) {
+      var tr = el('tr', { 'data-ai-id': rec.ID, title: 'Select this AI detection to populate the inventory form' });
+      aiDisplayColumns().forEach(function (column) {
+        var value = rec[column] == null ? '' : rec[column];
+        var cell = el('td');
+        if (column === 'IMAGE') cell.appendChild(el('span', { class: 'ai-image-reference', text: value }));
+        else cell.textContent = value;
+        tr.appendChild(cell);
+      });
+      tr.addEventListener('click', function () { selectAIProcessedRecord(rec); });
+      body.appendChild(tr);
+    });
+    document.getElementById('record-count').textContent = filtered.length + ' AI processed detection(s)';
+    return;
+  }
 
   filtered.forEach(function (rec) {
     var tr = el('tr', { 'data-id': rec.ID });
@@ -1384,7 +1480,7 @@ function renderTable() {
     body.appendChild(tr);
   });
 
-  document.getElementById('record-count').textContent = filtered.length + ' of ' + allRecords.length + ' record(s)';
+  document.getElementById('record-count').textContent = filtered.length + ' of ' + sourceRecords.length + ' record(s)';
 }
 
 document.getElementById('search-box').addEventListener('input', renderTable);
@@ -1574,6 +1670,7 @@ if (SpeechRecognition) {
 var formPanel = document.getElementById('form-panel');
 var formResizer = document.getElementById('form-resizer');
 var formWidthReset = document.getElementById('form-width-reset');
+var formCollapseToggle = document.getElementById('form-collapse-toggle');
 var FORM_PANEL_DEFAULT_WIDTH = 420;
 var FORM_PANEL_WIDE_THRESHOLD = 580;
 var formResizeStartX = 0;
@@ -1606,6 +1703,17 @@ function setFormPanelWidth(width, persist) {
 function storedFormPanelWidth() {
   var savedWidth = Number(window.localStorage.getItem('inventoryFormPanelWidth'));
   return Number.isFinite(savedWidth) && savedWidth > 0 ? savedWidth : FORM_PANEL_DEFAULT_WIDTH;
+}
+
+function setFormPanelCollapsed(collapsed, persist) {
+  document.body.classList.toggle('form-panel-collapsed', collapsed);
+  formCollapseToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+  formCollapseToggle.title = collapsed ? 'Expand inventory form' : 'Collapse inventory form';
+  var accessibleLabel = collapsed ? 'Expand inventory form' : 'Collapse inventory form';
+  formCollapseToggle.querySelector('.sr-only').textContent = accessibleLabel;
+  formResizer.setAttribute('aria-hidden', collapsed ? 'true' : 'false');
+  formResizer.tabIndex = collapsed ? -1 : 0;
+  if (persist) window.localStorage.setItem('inventoryFormPanelCollapsed', collapsed ? 'true' : 'false');
 }
 
 function beginFormResize(event) {
@@ -1675,11 +1783,18 @@ formWidthReset.addEventListener('click', function () {
   formResizer.focus();
 });
 
+formCollapseToggle.addEventListener('click', function () {
+  var collapsed = !document.body.classList.contains('form-panel-collapsed');
+  setFormPanelCollapsed(collapsed, true);
+  if (!collapsed) setFormPanelWidth(storedFormPanelWidth(), false);
+});
+
 window.addEventListener('resize', function () {
   setFormPanelWidth(storedFormPanelWidth(), false);
 });
 
 setFormPanelWidth(storedFormPanelWidth(), false);
+setFormPanelCollapsed(window.localStorage.getItem('inventoryFormPanelCollapsed') === 'true', false);
 
 buildTabBar();
 loadSpecAndRecords();

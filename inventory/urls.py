@@ -63,6 +63,7 @@ urlpatterns = [
     path("api/projects/select", views.api_select_project, name="api_select_project"),
     path("api/<str:key>/spec", views.api_spec, name="api_spec"),
     path("api/<str:key>/records", views.api_records, name="api_records"),
+    path("api/<str:key>/ai-processed", views.api_ai_processed_records, name="api_ai_processed_records"),
     path("api/<str:key>/records/<int:rec_id>", views.api_record_detail, name="api_record_detail"),
     path("api/<str:key>/records/<int:rec_id>/image", views.api_record_image, name="api_record_image"),
     path(

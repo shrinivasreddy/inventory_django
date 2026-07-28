@@ -9,7 +9,13 @@
           <h2 id="inventory-records-title">Inventory Records</h2>
           <p>Latest records with the account that added each entry.</p>
         </div>
-        <a class="button" href="{% url 'admin:inventory_tabrecord_changelist' %}">View all records</a>
+        <nav class="dashboard-records__actions" aria-label="Inventory record actions">
+          <a class="button dashboard-records__action dashboard-records__action--ai" href="{% url 'admin:inventory_tabrecord_import_ai_processed' %}">
+            <span aria-hidden="true">&#8679;</span> Upload AI Processed
+          </a>
+          <a class="button dashboard-records__action" href="{% url 'admin:inventory_tabrecord_ai_filter_settings' %}">AI Filter Settings</a>
+          <a class="button dashboard-records__action" href="{% url 'admin:inventory_tabrecord_changelist' %}">View all records</a>
+        </nav>
       </div>
       <div class="dashboard-records__table-wrap">
         <table>

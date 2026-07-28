@@ -1,0 +1,18 @@
+{% extends "admin/base_site.html" %}
+{% block breadcrumbs %}<div class="breadcrumbs"><a href="{% url 'admin:index' %}">Home</a> &rsaquo; <a href="{% url 'admin:inventory_tabrecord_changelist' %}">Inventory records</a> &rsaquo; AI Filter Settings</div>{% endblock %}
+{% block content %}
+<div class="excel-import-layout">
+  <section class="excel-import-card">
+    <h1>Default AI exclusion list</h1>
+    <p>Project: <strong>{{ project.name }}</strong></p>
+    <p>Checked historical values and manually entered values will be pre-applied to future uploads.</p>
+    <form method="post" novalidate>{% csrf_token %}
+      {{ form.non_field_errors }}
+      <div class="form-row ai-code-picker"><div>{{ form.historical_codes.errors }}{{ form.historical_codes.label_tag }}{{ form.historical_codes }}{% if not history_rows %}<p class="help">No CODE values have been observed for this project yet.</p>{% endif %}</div></div>
+      <div class="form-row"><div>{{ form.manual_codes.errors }}{{ form.manual_codes.label_tag }}{{ form.manual_codes }}<p class="help">{{ form.manual_codes.help_text }}</p></div></div>
+      <div class="submit-row"><input type="submit" value="Save default exclusions" class="default"><a href="{{ upload_url }}" class="button">Go to AI upload</a></div>
+    </form>
+  </section>
+  <aside class="excel-help-card"><h2>Historical CODE values</h2><p>Values are accumulated from this project's uploaded AI files, including excluded rows.</p><ul>{% for row in history_rows %}<li><strong>{{ row.code }}</strong> — seen {{ row.occurrence_count }} time{{ row.occurrence_count|pluralize }}</li>{% empty %}<li>No upload history yet.</li>{% endfor %}</ul></aside>
+</div>
+{% endblock %}

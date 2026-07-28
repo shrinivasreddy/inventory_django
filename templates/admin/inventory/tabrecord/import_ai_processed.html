@@ -1,0 +1,17 @@
+{% extends "admin/base_site.html" %}
+{% block breadcrumbs %}<div class="breadcrumbs"><a href="{% url 'admin:index' %}">Home</a> &rsaquo; <a href="{% url 'admin:inventory_tabrecord_changelist' %}">Inventory records</a> &rsaquo; Import AI Processed</div>{% endblock %}
+{% block content %}
+<div class="excel-import-layout">
+  <section class="excel-import-card">
+    <h1>Import AI processed Sign records</h1>
+    <p>Records will be saved directly into Sign Inventory for <strong>{{ project.name }}</strong>.</p>
+    <p><a href="{{ settings_url }}">Manage the saved default exclusion list</a>. Changes made below apply only to this upload.</p>
+    <form method="post" enctype="multipart/form-data" novalidate>{% csrf_token %}
+      {{ form.non_field_errors }}
+      {% for field in form %}<div class="form-row"><div>{{ field.errors }}{{ field.label_tag }}{{ field }}{% if field.help_text %}<p class="help">{{ field.help_text }}</p>{% endif %}</div></div>{% endfor %}
+      <div class="submit-row"><input type="submit" value="Import AI records" class="default"><a class="button cancel-link" href="{% url 'admin:inventory_tabrecord_changelist' %}">Cancel</a></div>
+    </form>
+  </section>
+  <aside class="excel-help-card"><h2>Mapping</h2><p>CODE → MUTCD; TEXT → Word Description; Latitude and Longitude use the existing inventory fields.</p><p>The saved exclusion defaults are prefilled. You may add or remove values for this upload without changing the saved settings.</p><p>Frame, Time, X1, Y1, X2, Y2, Elevation, and IMAGE are retained as hidden AI fields and shown in the AI Processed view only.</p></aside>
+</div>
+{% endblock %}

@@ -132,6 +132,10 @@ input:focus, select:focus, textarea:focus { border-color: var(--bd-blue); box-sh
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid rgba(234, 102, 0, 0.38); outline-offset: 2px; }
 #status, #record-count { color: var(--bd-muted); }
 .insert-action-heading,.insert-action-cell { width:102px; min-width:102px; text-align:center!important; }
+.ai-image-reference { display:block; max-width:220px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#record-modebar { display:flex; gap:8px; padding:8px 30px; border-bottom:1px solid #d8e0eb; background:#f5f7fa; }
+#record-modebar button { border:1px solid #b9c8dc; border-radius:999px; padding:7px 16px; background:#fff; color:var(--bd-navy); font-weight:800; cursor:pointer; }
+#record-modebar button.active { border-color:var(--bd-orange); background:var(--bd-orange); color:#fff; }
 .insert-below-btn { min-height:30px; padding:5px 9px; border:1px solid #9cb4d4; border-radius:5px; background:#fff; color:var(--bd-navy); font-size:11px; font-weight:800; opacity:0; transform:translateY(3px); cursor:pointer; transition:opacity .15s ease,transform .15s ease,background .15s ease,color .15s ease; }
 tbody tr:hover .insert-below-btn,.insert-below-btn:focus-visible { opacity:1; transform:none; }
 .insert-below-btn:hover { border-color:var(--bd-orange); background:var(--bd-orange); color:#fff; }
@@ -207,8 +211,75 @@ body.has-image-lightbox { overflow:hidden; }
   width: var(--form-panel-width, 420px);
   flex: 0 0 var(--form-panel-width, 420px);
   min-width: 0;
+  max-height: calc(100vh - 230px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-color: #8fa8c8 #eef4fa;
+  scrollbar-width: thin;
   transition: flex-basis .24s ease, width .24s ease, box-shadow .24s ease, transform .24s ease;
   animation: workspace-panel-in .45s ease both;
+}
+
+#form-collapse-toggle {
+  position: sticky;
+  top: 10px;
+  z-index: 7;
+  display: flex;
+  float: right;
+  width: 32px;
+  height: 64px;
+  align-items: center;
+  justify-content: center;
+  margin: 0 0 -64px;
+  padding: 0;
+  border: 1px solid #bfd0e6;
+  border-radius: 10px 0 0 10px;
+  background: linear-gradient(180deg, #ffffff, #eaf3fc);
+  color: var(--bd-blue);
+  box-shadow: 4px 6px 18px rgba(0,42,125,.12);
+  cursor: pointer;
+  transition: color .2s ease, background .2s ease, border-color .2s ease, box-shadow .2s ease, transform .25s ease;
+}
+
+#form-collapse-toggle:hover,
+#form-collapse-toggle:focus-visible {
+  border-color: var(--bd-orange);
+  background: var(--bd-blue);
+  color: var(--bd-white);
+  box-shadow: 4px 8px 22px rgba(0,42,125,.22);
+  outline: none;
+}
+
+.form-collapse-toggle__icon {
+  display: block;
+  font-size: 30px;
+  font-weight: 500;
+  line-height: 1;
+  transform: translateY(-1px);
+  transition: transform .25s ease;
+}
+
+body.form-panel-collapsed #form-panel {
+  width: 52px;
+  flex-basis: 52px;
+  padding: 8px;
+  overflow: hidden;
+}
+
+body.form-panel-collapsed #form-panel > :not(#form-collapse-toggle) { display: none; }
+
+body.form-panel-collapsed #form-resizer {
+  display: none;
+}
+
+body.form-panel-collapsed #form-collapse-toggle {
+  top: 8px;
+  margin: 0;
+  border-radius: 8px;
+}
+
+body.form-panel-collapsed .form-collapse-toggle__icon {
+  transform: translateY(-1px) rotate(180deg);
 }
 
 #table-panel {
@@ -222,7 +293,7 @@ body.has-image-lightbox { overflow:hidden; }
   justify-content: space-between;
   gap: 16px;
   margin: -2px 0 20px;
-  padding-bottom: 16px;
+  padding: 0 42px 16px 0;
   border-bottom: 1px solid var(--bd-border);
 }
 
@@ -423,10 +494,21 @@ tbody tr:hover {
 
 @media (max-width: 900px) {
   #layout { gap: 14px; min-height: 0; }
-  #form-panel { width: 100%; flex: 0 0 auto; }
+  #form-panel { width: 100%; max-height: min(72vh, 760px); flex: 0 0 auto; }
   #form-resizer { display: none; }
   #form-panel.is-wide #form-grid { grid-template-columns: minmax(0, 1fr); }
   #form-width-reset { display: none; }
+  #form-collapse-toggle {
+    top: 8px;
+    width: 42px;
+    height: 36px;
+    margin: 0 0 -36px auto;
+    border-radius: 8px;
+  }
+  .form-collapse-toggle__icon { transform: rotate(90deg); }
+  body.form-panel-collapsed #form-panel { width: 100%; max-height: 52px; flex-basis: 52px; padding: 8px; }
+  body.form-panel-collapsed #form-collapse-toggle { margin: 0 auto; border-radius: 8px; }
+  body.form-panel-collapsed .form-collapse-toggle__icon { transform: rotate(-90deg); }
 }
 
 @media (max-width: 600px) {

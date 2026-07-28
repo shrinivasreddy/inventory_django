@@ -10,6 +10,8 @@ def admin_inventory_records(request):
     admin_path = f"/{settings.ADMIN_URL.strip('/')}/"
     if not request.path.startswith(admin_path):
         return {}
+    if not request.resolver_match or request.resolver_match.url_name != "index":
+        return {}
     project = selected_project(request)
     records = list(
         TabRecord.objects.filter(project=project).select_related("owner").order_by("-created_at")[:50]

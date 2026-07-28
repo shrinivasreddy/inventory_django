@@ -159,6 +159,33 @@ input[type="submit"]:hover, button:hover, .button:hover, a.button:hover, .object
 
 /* Admin inventory overview grouped by project. */
 .model-tabrecord.change-list #changelist-form { min-width:0; }
+
+.dashboard-records__actions {
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+  gap:9px;
+}
+.dashboard-records__actions .dashboard-records__action {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+  min-height:40px;
+  padding:9px 14px!important;
+  white-space:nowrap;
+}
+.dashboard-records__actions .dashboard-records__action--ai {
+  background:#ea6600!important;
+}
+.dashboard-records__actions .dashboard-records__action--ai:hover {
+  background:#c95000!important;
+}
+@media (max-width:767px) {
+  .dashboard-records__header { align-items:stretch; flex-direction:column; }
+  .dashboard-records__actions { justify-content:stretch; }
+  .dashboard-records__actions .dashboard-records__action { flex:1 1 100%; }
+}
 .project-record-groups { display:grid; gap:18px; padding:16px 0; }
 .project-record-group {
   border:1px solid #d5e1ef; border-radius:12px; overflow:hidden; background:#fff;
