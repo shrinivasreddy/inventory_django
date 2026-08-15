@@ -78,7 +78,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='framerangeassignment',
-            constraint=models.CheckConstraint(condition=models.Q(('start_frame__lte', models.F('end_frame'))), name='frame_range_start_lte_end'),
+            constraint=models.CheckConstraint(check=models.Q(('start_frame__lte', models.F('end_frame'))), name='frame_range_start_lte_end'),
         ),
         migrations.AddConstraint(
             model_name='framerangeassignment',

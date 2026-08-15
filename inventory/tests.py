@@ -1809,6 +1809,37 @@ class DatabaseConfigurationTests(TestCase):
         street_name_column = headers.index("STREET_NAME") + 1
         self.assertTrue(sheet.cell(2, street_name_column).value.startswith("'="))
 
+    def test_inventory_export_ignores_pagination_and_search_parameters(self):
+        self.client.force_login(self.user)
+        TabRecord.objects.bulk_create(
+            [
+                TabRecord(
+                    project=self.project,
+                    tab="sign",
+                    tab_record_id=index,
+                    display_order=index * 10,
+                    owner=self.user,
+                    data={
+                        "ST_ID": str(index),
+                        "POLE_ID": f"P{index}",
+                        "SIGN": "S1",
+                        "SIGN_UID": f"SR_{index}_P{index}_S1",
+                    },
+                )
+                for index in range(1, 136)
+            ]
+        )
+
+        response = self.client.get(
+            reverse("api_export", args=["sign"]),
+            {"page": "2", "search": "does-not-match-any-record"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(io.BytesIO(response.content), read_only=True)
+        worksheet = workbook.active
+        self.assertEqual(worksheet.max_row - 1, 135)
+
     def test_regular_user_cannot_access_admin_excel_tools(self):
         self.client.force_login(self.user)
         for url_name in (

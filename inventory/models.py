@@ -110,7 +110,7 @@ class FrameRangeAssignment(models.Model):
         ordering = ["project", "start_frame", "end_frame", "user__username"]
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(start_frame__lte=models.F("end_frame")),
+                check=models.Q(start_frame__lte=models.F("end_frame")),
                 name="frame_range_start_lte_end",
             ),
             models.UniqueConstraint(

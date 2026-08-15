@@ -270,10 +270,12 @@
 
 <div id="layout">
   <div id="form-panel">
-    <button id="form-collapse-toggle" type="button" aria-controls="form-panel" aria-expanded="true" title="Collapse inventory form">
-      <span class="form-collapse-toggle__icon" aria-hidden="true">&#8249;</span>
-      <span class="sr-only">Collapse inventory form</span>
-    </button>
+    <div class="form-panel-sticky-controls">
+      <button id="form-collapse-toggle" type="button" aria-controls="form-panel" aria-expanded="true" title="Collapse inventory form">
+        <span class="form-collapse-toggle__icon" aria-hidden="true">&#8249;</span>
+        <span class="sr-only">Collapse inventory form</span>
+      </button>
+    </div>
     <div class="form-panel-heading">
       <div>
         <span class="form-panel-eyebrow">Inventory entry</span>
@@ -301,7 +303,7 @@
       <span id="delete-control" class="record-action-control"><button id="delete-btn" disabled>Delete</button></span>
       <span id="record-permission-message" class="sr-only" aria-live="polite"></span>
       <button id="clear-btn">Clear Form</button>
-      <button id="export-btn">Export to Excel</button>
+      <button id="export-btn" title="Export every record in this inventory type, regardless of page or search">Export All Records to Excel</button>
     </div>
     <div id="status"></div>
   </div>
@@ -322,6 +324,11 @@
         <tbody id="table-body"></tbody>
       </table>
     </div>
+    <nav id="record-pagination" class="record-pagination" aria-label="Inventory record pages" hidden>
+      <button id="pagination-previous" type="button" aria-label="Previous page">Previous</button>
+      <span id="pagination-status" class="record-pagination__status" aria-live="polite"></span>
+      <button id="pagination-next" type="button" aria-label="Next page">Next</button>
+    </nav>
   </div>
 </div>
 
@@ -477,6 +484,8 @@ projectSelector.addEventListener('change', function () {
 
 var spec = null;
 var allRecords = [];
+var RECORDS_PER_PAGE = 100;
+var currentRecordPage = 1;
 var editingId = null;
 var editingCanModify = false;
 var insertAfterId = null;
@@ -728,6 +737,7 @@ function buildRecordModeBar() {
     if (recordViewMode === mode.key) button.classList.add('active');
     button.addEventListener('click', function () {
       recordViewMode = mode.key;
+      currentRecordPage = 1;
       buildRecordModeBar();
       buildTableHead();
       if (recordViewMode === 'ai') loadAIProcessedRecords(); else renderTable();
@@ -741,6 +751,7 @@ function switchTab(key) {
   pendingImageFile = null;
   currentTabKey = key;
   recordViewMode = 'inventory';
+  currentRecordPage = 1;
   editingId = null;
   insertAfterId = null;
   buildTabBar();
@@ -1391,6 +1402,7 @@ function loadRecords() {
     if (!res.ok) throw new Error(res.data.error || 'Failed to load records.');
     var data = res.data;
     allRecords = data.records;
+    currentRecordPage = 1;
     nextIdPreview = data.next_id;
     renderTable();
     refreshAutoFields();
@@ -1401,6 +1413,7 @@ function loadAIProcessedRecords() {
   apiRequest('/api/' + currentTabKey + '/ai-processed').then(function (res) {
     if (!res.ok) throw new Error(res.data.error || 'Failed to load AI processed rows.');
     aiProcessedRecords = res.data.records || [];
+    currentRecordPage = 1;
     renderTable();
   }).catch(function (error) { setStatus(error.message); });
 }
@@ -1425,8 +1438,13 @@ function renderTable() {
     return Object.keys(rec).some(function (c) { return String(rec[c] || '').toLowerCase().includes(query); });
   });
 
+  var totalPages = Math.max(1, Math.ceil(filtered.length / RECORDS_PER_PAGE));
+  currentRecordPage = Math.min(Math.max(1, currentRecordPage), totalPages);
+  var pageStart = (currentRecordPage - 1) * RECORDS_PER_PAGE;
+  var pageRecords = filtered.slice(pageStart, pageStart + RECORDS_PER_PAGE);
+
   if (recordViewMode === 'ai') {
-    filtered.forEach(function (rec) {
+    pageRecords.forEach(function (rec) {
       var tr = el('tr', { 'data-ai-id': rec.ID, title: 'Select this AI detection to populate the inventory form' });
       aiDisplayColumns().forEach(function (column) {
         var value = rec[column] == null ? '' : rec[column];
@@ -1438,11 +1456,11 @@ function renderTable() {
       tr.addEventListener('click', function () { selectAIProcessedRecord(rec); });
       body.appendChild(tr);
     });
-    document.getElementById('record-count').textContent = filtered.length + ' AI processed detection(s)';
+    updatePagination(filtered.length, sourceRecords.length, 'AI processed detection(s)');
     return;
   }
 
-  filtered.forEach(function (rec) {
+  pageRecords.forEach(function (rec) {
     var tr = el('tr', { 'data-id': rec.ID });
     if (rec.ID === editingId) tr.classList.add('selected');
     var insertCell = el('td', { class: 'insert-action-cell' });
@@ -1480,10 +1498,44 @@ function renderTable() {
     body.appendChild(tr);
   });
 
-  document.getElementById('record-count').textContent = filtered.length + ' of ' + sourceRecords.length + ' record(s)';
+  updatePagination(filtered.length, sourceRecords.length, 'record(s)');
 }
 
-document.getElementById('search-box').addEventListener('input', renderTable);
+function updatePagination(filteredCount, sourceCount, itemLabel) {
+  var pagination = document.getElementById('record-pagination');
+  var previous = document.getElementById('pagination-previous');
+  var next = document.getElementById('pagination-next');
+  var status = document.getElementById('pagination-status');
+  var totalPages = Math.max(1, Math.ceil(filteredCount / RECORDS_PER_PAGE));
+  var firstVisible = filteredCount ? ((currentRecordPage - 1) * RECORDS_PER_PAGE) + 1 : 0;
+  var lastVisible = filteredCount ? Math.min(currentRecordPage * RECORDS_PER_PAGE, filteredCount) : 0;
+
+  document.getElementById('record-count').textContent = filteredCount === sourceCount
+    ? sourceCount + ' ' + itemLabel
+    : filteredCount + ' matching of ' + sourceCount + ' ' + itemLabel;
+  status.textContent = 'Page ' + currentRecordPage + ' of ' + totalPages + ' · Showing ' + firstVisible + '–' + lastVisible;
+  previous.disabled = currentRecordPage <= 1;
+  next.disabled = currentRecordPage >= totalPages;
+  pagination.hidden = filteredCount <= RECORDS_PER_PAGE;
+}
+
+document.getElementById('pagination-previous').addEventListener('click', function () {
+  if (currentRecordPage <= 1) return;
+  currentRecordPage -= 1;
+  renderTable();
+  document.getElementById('table-scroll').scrollTop = 0;
+});
+
+document.getElementById('pagination-next').addEventListener('click', function () {
+  currentRecordPage += 1;
+  renderTable();
+  document.getElementById('table-scroll').scrollTop = 0;
+});
+
+document.getElementById('search-box').addEventListener('input', function () {
+  currentRecordPage = 1;
+  renderTable();
+});
 var assistantPreview = null;
 var assistantPanel = document.getElementById('assistant-panel');
 var assistantToggle = document.getElementById('assistant-toggle');
