@@ -11,6 +11,7 @@ from django.core import mail
 from django.contrib.auth.models import User
 from django.test import Client, TestCase, override_settings
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.exceptions import ValidationError
 from django.urls import reverse
 from django.utils import timezone
 from openpyxl import Workbook, load_workbook
@@ -24,9 +25,11 @@ from .models import (
     DropdownOption,
     FrameRangeAssignment,
     InventorySection,
+    Jurisdiction,
     MutcdClassification,
     MutcdFallback,
     MutcdMapping,
+    MutcdReference,
     Project,
     RegistrationApproval,
     TabRecord,
@@ -2046,3 +2049,94 @@ class ProjectAccessTests(TestCase):
         self.assertContains(response, "Contact Admin")
         api_response = self.client.get(reverse("api_records", args=["sign"]))
         self.assertEqual(api_response.status_code, 403)
+
+
+class ProjectJurisdictionMutcdTests(TestCase):
+    def setUp(self):
+        self.upload_root = tempfile.TemporaryDirectory()
+        self.addCleanup(self.upload_root.cleanup)
+        self.media_override = override_settings(MEDIA_ROOT=self.upload_root.name)
+        self.media_override.enable()
+        self.addCleanup(self.media_override.disable)
+        self.admin = User.objects.create_superuser(
+            "jurisdiction-admin", "jurisdiction-admin@example.com", "StrongPass!234"
+        )
+        self.user = User.objects.create_user(
+            "jurisdiction-user", password="StrongPass!234"
+        )
+        self.california, _ = Jurisdiction.objects.update_or_create(
+            country="United States",
+            state="California",
+            defaults={"code": "test-us-ca", "is_active": True},
+        )
+        self.nevada = Jurisdiction.objects.create(
+            country="United States", state="Nevada", code="test-us-nv"
+        )
+        self.project = Project.objects.create(
+            name="California Project", code="california-project",
+            jurisdiction=self.california,
+        )
+        self.project.members.add(self.user)
+        image_buffer = io.BytesIO()
+        Image.new("RGB", (16, 16), "red").save(image_buffer, format="PNG")
+        self.reference = MutcdReference.objects.create(
+            jurisdiction=self.california,
+            mutcd_code="W8-1M",
+            description="BUMP AHEAD",
+        )
+        self.reference.image.save(
+            "w8-1m.png",
+            SimpleUploadedFile("w8-1m.png", image_buffer.getvalue(), "image/png"),
+        )
+
+    def test_sign_spec_is_scoped_to_project_jurisdiction(self):
+        MutcdReference.objects.create(
+            jurisdiction=self.nevada,
+            mutcd_code="NV-ONLY",
+            description="NEVADA ONLY",
+        )
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("api_spec", args=["sign"]))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["project_jurisdiction"], "United States / California")
+        self.assertIn("W8-1M", data["options"]["MUTCD"])
+        self.assertNotIn("NV-ONLY", data["options"]["MUTCD"])
+        self.assertEqual(
+            data["mutcd_reference"]["W8-1M"][0]["description"], "BUMP AHEAD"
+        )
+
+    def test_create_sign_auto_populates_reference_description_and_image(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("api_records", args=["sign"]),
+            data=json.dumps(
+                {"row": {"ST_ID": "100", "POLE_ID": "P1", "SIGN": "S1", "MUTCD": "W8-1M"}}
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        record = TabRecord.objects.get(project=self.project, tab="sign")
+        self.assertEqual(record.data["WORD_DESCRIPTION"], "BUMP AHEAD")
+        self.assertEqual(record.data["IMAGE_LINK"], "")
+        image_response = self.client.get(
+            reverse("mutcd_reference_image", args=[self.reference.pk])
+        )
+        self.assertEqual(image_response.status_code, 200)
+        self.assertEqual(image_response["Content-Type"], "image/png")
+        image_response.close()
+
+    def test_project_country_state_cannot_change_after_selection(self):
+        self.project.jurisdiction = self.nevada
+        with self.assertRaises(ValidationError):
+            self.project.full_clean()
+
+    def test_project_admin_requires_country_state_and_locks_saved_value(self):
+        self.client.force_login(self.admin)
+        add_response = self.client.get(reverse("admin:inventory_project_add"))
+        self.assertTrue(add_response.context["adminform"].form.fields["jurisdiction"].required)
+        change_response = self.client.get(
+            reverse("admin:inventory_project_change", args=[self.project.pk])
+        )
+        self.assertNotIn("jurisdiction", change_response.context["adminform"].form.fields)
+        self.assertContains(change_response, "United States / California")

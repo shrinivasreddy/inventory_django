@@ -112,6 +112,8 @@ INVENTORY_UPLOAD_ROOT = (
     if _inventory_upload_root.is_absolute()
     else BASE_DIR / _inventory_upload_root
 )
+MEDIA_ROOT = INVENTORY_UPLOAD_ROOT
+MEDIA_URL = "/uploads/"
 _configured_image_limit = int(
     os.environ.get("DJANGO_MAX_INVENTORY_IMAGE_BYTES", str(20 * 1024 * 1024))
 )

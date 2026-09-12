@@ -15,6 +15,7 @@ from django.db import transaction
 from django.db.models import F, Max, Q
 from django.http import FileResponse, JsonResponse, HttpResponseNotAllowed, HttpResponse
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from django.views.decorators.cache import never_cache
 from openpyxl import Workbook
@@ -27,6 +28,7 @@ from .models import (
     FrameRangeAssignment,
     MutcdClassification,
     MutcdMapping,
+    MutcdReference,
     Project,
     TabRecord,
 )
@@ -51,6 +53,57 @@ from .specs import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def mutcd_reference_image_url(request, reference):
+    if not reference.image:
+        return ""
+    return request.build_absolute_uri(
+        reverse("mutcd_reference_image", args=[reference.pk])
+    )
+
+
+def project_mutcd_reference_payload(request, project):
+    if not project or not project.jurisdiction_id:
+        return {}
+    references = MutcdReference.objects.filter(
+        jurisdiction_id=project.jurisdiction_id
+    ).order_by("mutcd_code", "description", "id")
+    payload = {}
+    for reference in references:
+        payload.setdefault(reference.mutcd_code, []).append(
+            {
+                "id": reference.pk,
+                "description": reference.description,
+                "image_url": mutcd_reference_image_url(request, reference),
+            }
+        )
+    return payload
+
+
+def apply_project_mutcd_reference(request, project, row, existing_data=None):
+    if not project.jurisdiction_id:
+        return row
+    code = str(row.get("MUTCD", "") or "").strip()
+    if not code:
+        return row
+    references = MutcdReference.objects.filter(
+        jurisdiction_id=project.jurisdiction_id,
+        mutcd_code__iexact=code,
+    ).order_by("description", "id")
+    requested_description = str(row.get("WORD_DESCRIPTION", "") or "").strip()
+    reference = (
+        references.filter(description__iexact=requested_description).first()
+        if requested_description
+        else references.first()
+    )
+    if reference is None:
+        return row
+    row["MUTCD"] = reference.mutcd_code
+    row["WORD_DESCRIPTION"] = reference.description
+    # Reference artwork is guidance only. IMAGE_LINK is exclusively the field
+    # photograph uploaded for this inventory record.
+    return row
 
 def invalid_date_fields(spec, row):
     """Return date fields that are not valid MM-DD-YYYY calendar dates."""
@@ -345,6 +398,22 @@ def api_spec(request, key):
         return JsonResponse({"error": "Unknown tab"}, status=404)
     spec = get_spec(key)
     state = get_section_state(key)
+    project = selected_project(request)
+    mutcd_reference = project_mutcd_reference_payload(request, project) if key == "sign" else {}
+    if mutcd_reference:
+        state["options"]["MUTCD"] = sorted(mutcd_reference, key=str.casefold)
+        state["options"]["WORD_DESCRIPTION"] = sorted(
+            {
+                item["description"]
+                for items in mutcd_reference.values()
+                for item in items
+            },
+            key=str.casefold,
+        )
+        state["mutcd_word_options"] = {
+            code: [item["description"] for item in items]
+            for code, items in mutcd_reference.items()
+        }
     return JsonResponse({
         "key": key,
         "columns": spec["columns"],
@@ -369,6 +438,8 @@ def api_spec(request, key):
         "mutcd_to_class": state["mutcd_to_class"],
         "mutcd_word_options": state["mutcd_word_options"],
         "mutcd_reverse_map": state["mutcd_reverse_map"],
+        "mutcd_reference": mutcd_reference,
+        "project_jurisdiction": str(project.jurisdiction) if project and project.jurisdiction_id else "",
         "auto_fill_map": spec.get("auto_fill_map"),
         "type_map": state["type_map"],
         "conditional_dropdowns": spec.get("conditional_dropdowns", {}),
@@ -416,6 +487,8 @@ def api_records(request, key):
 
         with locks[key]:
             ts_dict = get_section_state(key)
+            if key == "sign":
+                row = apply_project_mutcd_reference(request, project, row)
             row = compute_auto_fields(key, row, ts_dict)
             missing = missing_required_fields(key, row)
             if missing:
@@ -545,8 +618,8 @@ def api_record_detail(request, key, rec_id):
                     {"error": "Only the creator can edit this record."}, status=403
                 )
 
-            # Image links are generated only by the upload endpoint. Preserve
-            # the existing value during normal record edits.
+            # Preserve a user-uploaded image unless the MUTCD selection changes,
+            # in which case the project's jurisdiction reference image applies.
             row["IMAGE_LINK"] = str(rec.data.get("IMAGE_LINK", "") or "")
             if key == "sign" and rec.is_ai_processed:
                 for field in SIGN_AI_EXTRA_FIELDS:
@@ -555,6 +628,10 @@ def api_record_detail(request, key, rec_id):
                 row["_AI_SOURCE_FILE"] = rec.data.get("_AI_SOURCE_FILE", "")
 
             ts_dict = get_section_state(key)
+            if key == "sign":
+                row = apply_project_mutcd_reference(
+                    request, rec.project, row, existing_data=rec.data
+                )
             row = compute_auto_fields(key, row, ts_dict)
             missing = missing_required_fields(key, row)
             if missing:
@@ -635,6 +712,7 @@ def api_record_image(request, key, rec_id):
         image_url = request.build_absolute_uri(image_path)
         data = dict(rec.data)
         data["IMAGE_LINK"] = image_url
+        data.pop("_MUTCD_REFERENCE_ID", None)
         rec.data = data
         rec.save(update_fields=["data", "updated_at"])
     return JsonResponse({"record": record_api_row(request, rec)})
@@ -658,6 +736,36 @@ def inventory_image(request, folder, rec_id, filename):
     }[path.suffix.lower()]
     response = FileResponse(path.open("rb"), content_type=content_type)
     response["Content-Disposition"] = f'inline; filename="{filename}"'
+    response["Cache-Control"] = "private, max-age=3600"
+    return response
+
+
+@api_login_required
+@require_GET
+def mutcd_reference_image(request, reference_id):
+    project, project_error = require_selected_project(request)
+    if project_error:
+        return project_error
+    if not project.jurisdiction_id:
+        return JsonResponse(
+            {"error": "This project has no Country / State configured."}, status=404
+        )
+    reference = MutcdReference.objects.filter(
+        pk=reference_id,
+        jurisdiction_id=project.jurisdiction_id,
+    ).first()
+    if reference is None or not reference.image:
+        return JsonResponse({"error": "Reference image not found."}, status=404)
+    suffix = reference.image.name.rsplit(".", 1)[-1].lower()
+    content_types = {
+        "jpg": "image/jpeg", "jpeg": "image/jpeg",
+        "png": "image/png", "webp": "image/webp",
+    }
+    response = FileResponse(
+        reference.image.open("rb"),
+        content_type=content_types.get(suffix, "application/octet-stream"),
+    )
+    response["Content-Disposition"] = "inline"
     response["Cache-Control"] = "private, max-age=3600"
     return response
 

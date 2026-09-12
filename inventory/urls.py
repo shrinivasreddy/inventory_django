@@ -61,6 +61,11 @@ urlpatterns = [
     ),
     path("api/export_all", views.api_export_all, name="api_export_all"),
     path("api/projects/select", views.api_select_project, name="api_select_project"),
+    path(
+        "api/mutcd-reference/<int:reference_id>/image",
+        views.mutcd_reference_image,
+        name="mutcd_reference_image",
+    ),
     path("api/<str:key>/spec", views.api_spec, name="api_spec"),
     path("api/<str:key>/records", views.api_records, name="api_records"),
     path("api/<str:key>/ai-processed", views.api_ai_processed_records, name="api_ai_processed_records"),

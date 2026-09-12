@@ -21,9 +21,44 @@ from django.db import models
 # Project-scoped inventory access.
 
 
+class Jurisdiction(models.Model):
+    country = models.CharField(max_length=100)
+    state = models.CharField(max_length=100)
+    code = models.SlugField(max_length=30, unique=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["country", "state"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["country", "state"], name="unique_country_state"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.country} / {self.state}"
+
+
+def mutcd_reference_upload_to(instance, filename):
+    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else "png"
+    safe_code = "".join(
+        character if character.isalnum() or character in "-_" else "_"
+        for character in instance.mutcd_code
+    )
+    return f"mutcd_reference/{instance.jurisdiction.code}/{safe_code}_{instance.pk or 'new'}.{extension}"
+
+
 class Project(models.Model):
     name = models.CharField(max_length=150, unique=True)
     code = models.SlugField(max_length=50, unique=True)
+    jurisdiction = models.ForeignKey(
+        Jurisdiction,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="projects",
+        verbose_name="Country / State",
+    )
     members = models.ManyToManyField("auth.User", blank=True, related_name="inventory_projects")
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -33,6 +68,45 @@ class Project(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.code})"
+
+    def clean(self):
+        super().clean()
+        if not self.pk:
+            return
+        original_jurisdiction_id = (
+            Project.objects.filter(pk=self.pk)
+            .values_list("jurisdiction_id", flat=True)
+            .first()
+        )
+        if original_jurisdiction_id and self.jurisdiction_id != original_jurisdiction_id:
+            raise ValidationError(
+                {"jurisdiction": "Country / State is fixed after it is selected for a project."}
+            )
+
+
+class MutcdReference(models.Model):
+    jurisdiction = models.ForeignKey(
+        Jurisdiction, on_delete=models.CASCADE, related_name="mutcd_references"
+    )
+    mutcd_code = models.CharField(max_length=200)
+    description = models.CharField(max_length=500)
+    image = models.ImageField(upload_to=mutcd_reference_upload_to, blank=True)
+    source_sheet = models.CharField(max_length=100, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["jurisdiction", "mutcd_code", "description"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["jurisdiction", "mutcd_code", "description"],
+                name="unique_jurisdiction_mutcd_description",
+            )
+        ]
+        indexes = [models.Index(fields=["jurisdiction", "mutcd_code"])]
+
+    def __str__(self):
+        return f"{self.mutcd_code}: {self.description}"
 
 
 class AIImportSettings(models.Model):

@@ -38,9 +38,11 @@ from .models import (
     DropdownOption,
     FrameRangeAssignment,
     InventorySection,
+    Jurisdiction,
     MutcdClassification,
     MutcdFallback,
     MutcdMapping,
+    MutcdReference,
     Project,
     RegistrationApproval,
     TabRecord,
@@ -80,21 +82,22 @@ class ProjectAdmin(admin.ModelAdmin):
     list_display = (
         "project_name",
         "code_badge",
+        "jurisdiction_label",
         "status_badge",
         "member_count",
         "created_on",
         "project_actions",
     )
     list_display_links = ("project_name",)
-    list_filter = ("is_active",)
-    search_fields = ("name", "code", "members__username", "members__email")
+    list_filter = ("jurisdiction", "is_active")
+    search_fields = ("name", "code", "jurisdiction__country", "jurisdiction__state", "members__username", "members__email")
     filter_horizontal = ("members",)
     prepopulated_fields = {"code": ("name",)}
     fieldsets = (
         (
             "Project details",
             {
-                "fields": ("name", "code", "is_active"),
+                "fields": ("name", "code", "jurisdiction", "is_active"),
                 "description": (
                     "Create a clear project identity. The project code is generated "
                     "from the name and can be adjusted before saving."
@@ -116,6 +119,28 @@ class ProjectAdmin(admin.ModelAdmin):
 
     class Media:
         js = ("inventory/js/project-members.js",)
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj and obj.jurisdiction_id:
+            return ("jurisdiction",)
+        return ()
+
+    def get_form(self, request, obj=None, **kwargs):
+        form = super().get_form(request, obj, **kwargs)
+        if "jurisdiction" in form.base_fields:
+            form.base_fields["jurisdiction"].required = True
+            form.base_fields["jurisdiction"].queryset = Jurisdiction.objects.filter(
+                is_active=True
+            )
+            form.base_fields["jurisdiction"].help_text = (
+                "Select once when creating the project. This controls Sign Inventory "
+                "MUTCD descriptions and reference images and cannot be changed later."
+            )
+        return form
+
+    @admin.display(description="Country / State", ordering="jurisdiction__state")
+    def jurisdiction_label(self, obj):
+        return str(obj.jurisdiction) if obj.jurisdiction_id else "Not configured"
 
     def change_view(self, request, object_id, form_url="", extra_context=None):
         """Keep Admin's project choice in sync with the View Site workspace.
@@ -178,6 +203,30 @@ class ProjectAdmin(admin.ModelAdmin):
             '</span>',
             change_url, obj.name, delete_url, obj.name,
         )
+
+
+@admin.register(Jurisdiction)
+class JurisdictionAdmin(admin.ModelAdmin):
+    list_display = ("country", "state", "code", "is_active", "reference_count")
+    list_filter = ("country", "is_active")
+    search_fields = ("country", "state", "code")
+    prepopulated_fields = {"code": ("country", "state")}
+
+    @admin.display(description="MUTCD references")
+    def reference_count(self, obj):
+        return obj.mutcd_references.count()
+
+
+@admin.register(MutcdReference)
+class MutcdReferenceAdmin(admin.ModelAdmin):
+    list_display = ("mutcd_code", "description", "jurisdiction", "has_image", "source_sheet")
+    list_filter = ("jurisdiction",)
+    search_fields = ("mutcd_code", "description", "jurisdiction__country", "jurisdiction__state")
+    autocomplete_fields = ("jurisdiction",)
+
+    @admin.display(description="Image", boolean=True)
+    def has_image(self, obj):
+        return bool(obj.image)
 
 
 @admin.register(FrameRangeAssignment)

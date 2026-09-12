@@ -106,6 +106,18 @@
     display: block; width: 100%; max-height: 220px; object-fit: contain;
     margin: 0 0 10px; border: 1px solid #334155; border-radius: 6px; background: #020617;
   }
+  .mutcd-reference-card {
+    grid-column: 1 / -1; padding: 12px; border: 1px solid #2563eb;
+    border-radius: 8px; background: linear-gradient(145deg, #0b1830, #0b1220);
+  }
+  .mutcd-reference-card__header { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+  .mutcd-reference-card__title { color: #93c5fd; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+  .mutcd-reference-card__jurisdiction { color: #94a3b8; font-size: 10px; text-align: right; }
+  .mutcd-reference-card__image {
+    display: block; width: 100%; max-height: 220px; object-fit: contain; padding: 8px;
+    border: 1px solid #334155; border-radius: 7px; background: #fff;
+  }
+  .mutcd-reference-card__caption { margin: 8px 0 0; color: #cbd5e1; font-size: 12px; line-height: 1.4; }
   .record-image-link { color: #2563eb; font-weight: 700; white-space: nowrap; }
   .hidden { display: none !important; }
 
@@ -888,6 +900,29 @@ function buildForm() {
     }
 
     grid.appendChild(wrap);
+    if (currentTabKey === 'sign' && col === 'WORD_DESCRIPTION') {
+      var referenceCard = el('section', {
+        id: 'mutcd-reference-card', class: 'mutcd-reference-card hidden',
+        'aria-live': 'polite', 'aria-label': 'Selected MUTCD sign reference'
+      });
+      var referenceHeader = el('div', { class: 'mutcd-reference-card__header' });
+      referenceHeader.appendChild(el('span', {
+        class: 'mutcd-reference-card__title', text: 'MUTCD sign reference'
+      }));
+      referenceHeader.appendChild(el('span', {
+        class: 'mutcd-reference-card__jurisdiction',
+        text: spec.project_jurisdiction || ''
+      }));
+      referenceCard.appendChild(referenceHeader);
+      referenceCard.appendChild(el('img', {
+        id: 'mutcd-reference-image', class: 'mutcd-reference-card__image hidden',
+        alt: 'Selected MUTCD code reference sign'
+      }));
+      referenceCard.appendChild(el('p', {
+        id: 'mutcd-reference-caption', class: 'mutcd-reference-card__caption'
+      }));
+      grid.appendChild(referenceCard);
+    }
   });
 
   applyDefaultFieldValues();
@@ -939,6 +974,7 @@ function restoreCurrentDraft() {
   var isEditing = editingId !== null;
   setRecordActionPermissions(draft.canModify !== false, isEditing);
   if (isEditing && autoEls['ID']) autoEls['ID'].textContent = String(editingId);
+  applyMutcdReferencePreview(getVal('MUTCD'), getVal('WORD_DESCRIPTION'));
 }
 
 function applyDefaultFieldValues() {
@@ -977,25 +1013,64 @@ function syncMutcdLink(changedField) {
   var wordDesc = getVal('WORD_DESCRIPTION');
   if (changedField === 'MUTCD') {
     var descriptions = updateWordDescriptionChoices(mutcdCode);
-    if (descriptions.length === 1) {
-      setVal('WORD_DESCRIPTION', descriptions[0]);
-    } else if (descriptions.length > 1) {
-      if (!descriptions.includes(wordDesc)) setVal('WORD_DESCRIPTION', '');
-      setStatus(descriptions.length + ' word descriptions are available. Choose the correct one.');
-      var wordInput = fieldEls['WORD_DESCRIPTION'];
-      if (wordInput) {
-        wordInput.focus();
-        if (wordInput.showPicker) {
-          try { wordInput.showPicker(); } catch (_error) { /* Datalist remains selectable. */ }
-        }
+    if (descriptions.length >= 1) {
+      if (!descriptions.includes(wordDesc)) setVal('WORD_DESCRIPTION', descriptions[0]);
+      if (descriptions.length > 1) {
+        setStatus(
+          descriptions.length + ' descriptions are available for this project jurisdiction. ' +
+          'The first was selected; choose another if needed.'
+        );
       }
     } else if (mutcdCode) {
       setVal('WORD_DESCRIPTION', '');
     }
+    applyMutcdReferencePreview(mutcdCode, getVal('WORD_DESCRIPTION'));
   } else if (wordDesc && spec.mutcd_map[wordDesc]) {
     setVal('MUTCD', spec.mutcd_map[wordDesc].MUTCD || '');
     updateWordDescriptionChoices(getVal('MUTCD'));
+    applyMutcdReferencePreview(getVal('MUTCD'), wordDesc);
+  } else if (changedField === 'WORD_DESCRIPTION') {
+    applyMutcdReferencePreview(mutcdCode, wordDesc);
   }
+}
+
+function applyMutcdReferencePreview(mutcdCode, description) {
+  var card = document.getElementById('mutcd-reference-card');
+  var referenceImage = document.getElementById('mutcd-reference-image');
+  var caption = document.getElementById('mutcd-reference-caption');
+  var references = (spec.mutcd_reference && spec.mutcd_reference[mutcdCode]) || [];
+  if (!card) return;
+  if (!references.length) {
+    card.classList.add('hidden');
+    if (referenceImage) {
+      referenceImage.removeAttribute('src');
+      referenceImage.classList.add('hidden');
+    }
+    if (caption) caption.textContent = '';
+    return;
+  }
+  var selected = references.find(function (reference) {
+    return String(reference.description).toLowerCase() === String(description || '').toLowerCase();
+  }) || references[0];
+  if (selected.description && getVal('WORD_DESCRIPTION') !== selected.description) {
+    setVal('WORD_DESCRIPTION', selected.description);
+  }
+  card.classList.remove('hidden');
+  if (caption) caption.textContent = selected.description + ' (' + mutcdCode + ')';
+  if (selected.image_url) {
+    referenceImage.src = selected.image_url;
+    referenceImage.classList.remove('hidden');
+    // Keep the inventory-photo upload state independent from this reference.
+    imageFileName.textContent = pendingImageFile ? pendingImageFile.name : (editingId === null ? 'No image selected' : 'No replacement selected');
+    imageFileName.textContent = 'Project MUTCD reference · ' + (spec.project_jurisdiction || 'configured jurisdiction');
+  } else {
+    referenceImage.removeAttribute('src');
+    referenceImage.classList.add('hidden');
+    if (caption) caption.textContent += ' - No reference image available';
+  }
+  imageFileName.textContent = pendingImageFile
+    ? pendingImageFile.name
+    : (editingId === null ? 'No image selected' : 'No replacement selected');
 }
 
 function updateWordDescriptionChoices(mutcdCode) {
@@ -1302,6 +1377,7 @@ function clearForm(keepSticky) {
   updateInsertMode();
   delete tabDrafts[currentTabKey];
   if (spec.mutcd_word_options) updateWordDescriptionChoices('');
+  applyMutcdReferencePreview('', '');
   refreshAutoFields();
   setRecordActionPermissions(false, false);
   document.querySelectorAll('#table-body tr').forEach(function (tr) { tr.classList.remove('selected'); });
@@ -1333,8 +1409,9 @@ function loadRecord(record) {
       showImagePreview('', false);
     }
   }
-  if (spec.mutcd_word_options) updateWordDescriptionChoices(getVal('MUTCD'));
   editingId = record.ID;
+  if (spec.mutcd_word_options) updateWordDescriptionChoices(getVal('MUTCD'));
+  applyMutcdReferencePreview(getVal('MUTCD'), getVal('WORD_DESCRIPTION'));
   updateInsertMode();
   refreshAutoFields();
   if (autoEls['ID']) autoEls['ID'].textContent = String(record.ID);
