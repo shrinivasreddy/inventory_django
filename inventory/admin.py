@@ -984,8 +984,10 @@ class InventoryDateAddedFilter(admin.ListFilter):
 
     def __init__(self, request, params, model, model_admin):
         super().__init__(request, params, model, model_admin)
-        self.date_from = params.pop("date_from", [""])[-1]
-        self.date_to = params.pop("date_to", [""])[-1]
+        self.date_from = request.GET.get("date_from", "")
+        self.date_to = request.GET.get("date_to", "")
+        params.pop("date_from", None)
+        params.pop("date_to", None)
         self.other_parameters = [
             (key, value)
             for key, values in request.GET.lists()
@@ -1441,7 +1443,7 @@ class TabRecordAdmin(admin.ModelAdmin):
                             supplied = {
                                 header: self._excel_value(values[index] if index < len(values) else "")
                                 for index, header in enumerate(headers)
-                                if header and header not in {"ID", "IMAGE_LINK"}
+                                if header and header not in {"ID", "IMAGE_LINK", "NIGHT_SIMULATION", "Night Sumulation Visibility"}
                             }
                             row = {
                                 column: supplied.get(column, "")
@@ -1547,9 +1549,10 @@ class TabRecordAdmin(admin.ModelAdmin):
             )
             ws = workbook.create_sheet(spec["export_sheet_name"])
             export_columns = list(spec["columns"]) + ["ADDED_BY"]
-            self._style_sheet(ws, export_columns)
+            self._style_sheet(ws, ["Night simulation" if c == "NIGHT_SIMULATION" else c for c in export_columns])
             for record in records:
-                row = record.as_row(include_owner=True)
+                from .views import export_image_links
+                row = export_image_links(request, record.as_row(include_owner=True))
                 ws.append([safe_excel_cell(row.get(column, "")) for column in export_columns])
             record_count += len(records)
         buffer = io.BytesIO()

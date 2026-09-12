@@ -466,7 +466,7 @@ class InventoryImageTests(TestCase):
             self.assertEqual(first.status_code, 200)
             first_link = first.json()["record"]["IMAGE_LINK"]
             self.assertTrue(first_link.startswith("http://testserver/uploads/images/sign_inventory/1/"))
-            directory = Path(temporary_root) / "images" / "sign_inventory" / "1"
+            directory = Path(temporary_root) / "day-simulation" / "Image Project" / "1"
             self.assertEqual([path.name for path in directory.iterdir()], ["image.jpg"])
 
             second = self.client.post(url, {"image": self.image_upload("PNG", "blue")})
@@ -485,6 +485,111 @@ class InventoryImageTests(TestCase):
                 self.client.post(url, {"image": self.image_upload("PNG", "green")}).status_code,
                 404,
             )
+
+    def test_night_simulation_is_independent_and_exported(self):
+        from openpyxl import Workbook
+        from .views import write_sheet
+        from .specs import get_spec
+        with tempfile.TemporaryDirectory() as root, override_settings(INVENTORY_UPLOAD_ROOT=Path(root)):
+            self.client.force_login(self.user)
+            url = reverse("api_record_image", args=["sign", 1])
+            self.client.post(url, {"image": self.image_upload("JPEG", "red")})
+            response = self.client.post(url, {
+                "slot": "night_simulation", "image": self.image_upload("PNG", "blue")
+            })
+            self.assertEqual(response.status_code, 200)
+            row = response.json()["record"]
+            self.assertTrue(row["NIGHT_SIMULATION"].endswith("night_simulation.png"))
+            self.assertTrue(row["IMAGE_LINK"].endswith("image.jpg"))
+            self.client.post(url, {"image": self.image_upload("PNG", "green")})
+            view = self.client.get(row["NIGHT_SIMULATION"])
+            self.assertEqual(view.status_code, 200)
+            view.close()
+            self.client.post(url, {"slot": "night_simulation", "image": self.image_upload("JPEG", "blue")})
+            directory = Path(root) / "day-simulation/Image Project/1"
+            night_directory = Path(root) / "night-simulation/Image Project/1"
+            self.assertEqual({p.name for p in directory.iterdir()}, {"image.png"})
+            self.assertEqual({p.name for p in night_directory.iterdir()}, {"night_simulation.jpg"})
+            self.record.refresh_from_db()
+            self.project.name = "Renamed Project"
+            self.project.save()
+            view = self.client.get(self.record.data["NIGHT_SIMULATION"])
+            self.assertEqual(view.status_code, 200)
+            view.close()
+            wb = Workbook()
+            write_sheet("sign", wb.active, [row])
+            headers = [c.value for c in wb.active[1]]
+            self.assertEqual(headers.count("Night simulation"), 1)
+            cell = wb.active.cell(2, headers.index("Night simulation") + 1)
+            self.assertEqual(cell.hyperlink.target, row["NIGHT_SIMULATION"])
+            for section in ("pavement", "lane", "curb"):
+                self.assertNotIn("NIGHT_SIMULATION", get_spec(section)["columns"])
+            self.client.force_login(self.other)
+            self.assertEqual(self.client.post(url, {"slot": "night_simulation", "image": self.image_upload("PNG", "red")}).status_code, 404)
+
+    def test_simulation_folder_names_and_delete_cleanup(self):
+        from .image_storage import simulation_image_directory
+        with tempfile.TemporaryDirectory() as root, override_settings(INVENTORY_UPLOAD_ROOT=Path(root)):
+            for name in ("3M", "Sandalus"):
+                self.project.name = name
+                self.project.save()
+                self.assertEqual(simulation_image_directory(self.project, 1, "image"), Path(root) / "day-simulation" / name / "1")
+            self.project.name = "../../outside"
+            self.project.save()
+            self.assertTrue(simulation_image_directory(self.project, 1, "image").resolve().is_relative_to(Path(root).resolve()))
+            self.client.force_login(self.user)
+            url = reverse("api_record_image", args=["sign", 1])
+            for slot in ("image", "night_simulation"):
+                self.assertEqual(self.client.post(url, {"slot": slot, "image": self.image_upload("PNG", "blue")}).status_code, 200)
+            self.record.refresh_from_db()
+            with self.captureOnCommitCallbacks(execute=True):
+                self.record.delete()
+            self.assertFalse(list(Path(root).rglob("*.png")))
+
+    def test_simulation_review_answers_permissions_export_and_image_reset(self):
+        from .views import write_sheet
+        from openpyxl import Workbook
+        with tempfile.TemporaryDirectory() as root, override_settings(INVENTORY_UPLOAD_ROOT=Path(root)):
+            self.client.force_login(self.user)
+            upload_url = reverse("api_record_image", args=["sign", 1])
+            review_url = reverse("api_simulation_review", args=[1])
+            self.record.refresh_from_db()
+            version = self.record.updated_at.isoformat()
+            missing = self.client.post(review_url, data=json.dumps({"answer": "Yes", "version": version}), content_type="application/json")
+            self.assertEqual(missing.status_code, 400)
+            for slot in ("image", "night_simulation"):
+                response = self.client.post(upload_url, {"slot": slot, "image": self.image_upload("PNG", "blue")})
+                self.assertEqual(response.status_code, 200)
+            row = response.json()["record"]
+            for answer in ("Yes", "No"):
+                response = self.client.post(review_url, data=json.dumps({"answer": answer, "version": row["_REVIEW_VERSION"]}), content_type="application/json")
+                self.assertEqual(response.status_code, 200)
+                row = response.json()["record"]
+                self.record.refresh_from_db()
+                self.assertEqual(self.record.data["Night Sumulation Visibility"], answer)
+                workbook = Workbook()
+                write_sheet("sign", workbook.active, [row])
+                headers = [cell.value for cell in workbook.active[1]]
+                self.assertEqual(workbook.active.cell(2, headers.index("Night Sumulation Visibility") + 1).value, answer)
+            self.assertEqual(self.client.post(review_url, data=json.dumps({"answer": "Maybe", "version": row["_REVIEW_VERSION"]}), content_type="application/json").status_code, 400)
+            self.assertEqual(self.client.post(review_url, data=json.dumps({"answer": "Yes", "version": version}), content_type="application/json").status_code, 409)
+            self.client.force_login(self.other)
+            self.assertEqual(self.client.post(review_url, data=json.dumps({"answer": "Yes", "version": row["_REVIEW_VERSION"]}), content_type="application/json").status_code, 404)
+            self.client.force_login(self.user)
+            response = self.client.post(upload_url, {"slot": "night_simulation", "image": self.image_upload("JPEG", "green")})
+            self.assertEqual(response.json()["record"]["Night Sumulation Visibility"], "")
+            self.assertContains(self.client.get(reverse("home")), "Compare Day and Night Simulation")
+
+    def test_review_rejects_non_object_json_and_export_uses_current_host(self):
+        from .views import export_image_links
+        from django.test import RequestFactory
+        self.client.force_login(self.user)
+        for body in ("[]", "null", "42", '"text"'):
+            response = self.client.post(reverse("api_simulation_review", args=[1]), data=body, content_type="application/json")
+            self.assertEqual(response.status_code, 400)
+        request = RequestFactory().get("/", secure=True)
+        row = export_image_links(request, {"NIGHT_SIMULATION": "http://localhost:8000/uploads/images/sign_inventory/1/night_simulation.png"})
+        self.assertEqual(row["NIGHT_SIMULATION"], "https://testserver/uploads/images/sign_inventory/1/night_simulation.png")
 
     def test_rejects_non_image_upload(self):
         with tempfile.TemporaryDirectory() as temporary_root, override_settings(

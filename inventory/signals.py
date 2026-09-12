@@ -153,5 +153,5 @@ def notify_newly_approved_user(sender, instance, created, **kwargs):
 @receiver(post_delete, sender=TabRecord)
 def remove_deleted_record_image(sender, instance, **kwargs):
     transaction.on_commit(
-        lambda: delete_record_image_directory(instance.tab, instance.tab_record_id)
+        lambda: delete_record_image_directory(instance.tab, instance.tab_record_id, instance.data)
     )

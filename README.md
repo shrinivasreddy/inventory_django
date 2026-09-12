@@ -170,3 +170,7 @@ HTTPS would just break the app. Once IIS/Nginx is confirmed handling HTTPS,
 enable the corresponding `DJANGO_SECURE_*`, secure-cookie, and trusted-proxy
 settings in `.env`. Do not enable secure cookies while serving plain HTTP,
 because browsers will then withhold the authentication cookies.
+
+## Simulation review release
+
+See [the deployment guide](deploy/SIMULATION_RELEASE.md) for releasing the day/night upload and comparison changes. Use an isolated environment with `requirements.txt`; the previous global Python installation used Django 4.2 rather than the pinned Django 5.2.

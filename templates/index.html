@@ -86,7 +86,7 @@
   }
   .image-upload-box { border: 1px solid #334155; border-radius: 6px; padding: 10px; background: #0b1220; }
   #inventory-image-upload { margin: 12px 0; }
-  #inventory-image-label {
+  #inventory-image-label, #night-image-label {
     display: block; margin-bottom: 8px; color: #9ca3af; font-size: 11px;
     font-weight: 800; text-transform: uppercase;
   }
@@ -219,6 +219,57 @@
     #assistant-toggle { right: 12px; bottom: 12px; }
     #assistant-panel { right: 12px; bottom: 68px; }
   }
+#simulation-dialog { width:min(1100px, 94vw); max-height:90vh; overflow:auto; background:#0f172a; color:#f8fafc; border:1px solid #475569; border-radius:12px; padding:24px; }
+#simulation-dialog::backdrop { background:rgba(0,0,0,.75); }
+.simulation-pair { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.simulation-pair figure { margin:0; min-width:0; }
+.simulation-pair img { width:100%; height: min(48vh, 420px); object-fit:contain; background:#020617; }
+.simulation-pair figcaption { font-weight:bold; margin:8px 0; }
+#simulation-dialog fieldset { margin:18px 0; padding:12px; }
+#simulation-dialog label { display:inline-flex; align-items:center; gap:8px; margin-right:24px; }
+#simulation-dialog input { width:auto; }
+.simulation-actions { display:flex; justify-content:space-between; gap:12px; margin-top:16px; }
+.record-compare-btn { display:block; background:#003da6; color:white; padding:7px 12px; border:0; border-radius:5px; margin:4px 0; cursor:pointer; }
+#table-panel #table-scroll { height:85vh; max-height:none; min-height:360px; resize:vertical; overflow:auto; padding-bottom:12px; }
+.records-resize-help { margin:0 0 10px; font-size:12px; color:#64748b; }
+
+/* Simulation review dialog */
+#simulation-dialog { background:#f5f8fd; color:#163052; border:1px solid #cddbf0; border-radius:20px; padding:28px; box-shadow:0 30px 100px #00133366; width:min(1120px,94vw); }
+#simulation-dialog::backdrop { background:#071b38a6; backdrop-filter:blur(5px); }
+#simulation-dialog .simulation-eyebrow { color:#527398; font-size:11px; font-weight:800; letter-spacing:1.8px; }
+#simulation-dialog h2 { margin:9px 0 12px; font-size:clamp(21px,2.3vw,30px); line-height:1.25; color:#082c62; }
+#simulation-record { display:inline-block; background:#e5eefd; color:#164e92; border-radius:8px; padding:7px 12px; margin:0 0 14px; font-size:13px; font-weight:700; }
+#simulation-progress { display:block; width:100%; height:5px; border:0; border-radius:8px; margin:0 0 20px; accent-color:#2168ce; }
+#simulation-progress::-webkit-progress-bar { background:#dce6f5; border-radius:8px; }
+#simulation-progress::-webkit-progress-value { background:#2168ce; border-radius:8px; transition:width .2s; }
+#simulation-dialog .simulation-pair figure { background:white; border:1px solid #d6e1ef; border-radius:12px; overflow:hidden; box-shadow:0 3px 12px #12356408; }
+#simulation-dialog .simulation-pair figcaption { margin:0; padding:14px 16px; background:#edf4ff; color:#194c89; font-size:13px; border-bottom:1px solid #d6e1ef; }
+#simulation-dialog .simulation-pair figure:last-child figcaption { background:#172b50; color:#edf4ff; }
+#simulation-dialog .simulation-pair img { display:block; height: min(36vh,360px); background:#eaf0f8; }
+#simulation-dialog .simulation-pair img[hidden] { display:none; }
+#simulation-dialog .simulation-pair p { min-height:180px; margin:16px; padding:40px 24px; border:2px dashed #d7e2ef; border-radius:10px; text-align:center; color:#71849b; font-size:14px; line-height:1.7; }
+#simulation-dialog fieldset { border:0; margin:22px 0 8px; padding:0; display:flex; flex-wrap:wrap; gap:12px; }
+#simulation-dialog legend { color:#18385e; font-weight:800; font-size:16px; margin-bottom:12px; }
+#simulation-dialog label { flex:1; margin:0; min-width:220px; border:2px solid #d7e2f0; background:white; border-radius:12px; padding:14px 18px; gap:12px; cursor:pointer; transition:background .15s,border-color .15s,box-shadow .15s; }
+#simulation-dialog label:hover { border-color:#739ccd; box-shadow:0 3px 10px #15437b14; }
+#simulation-dialog label:has(input:checked) { background:#eaf8f1; border-color:#22a26b; }
+#simulation-dialog label:has(input[value="No"]:checked) { background:#fff2ec; border-color:#dd7940; }
+#simulation-dialog label:focus-within { outline:3px solid #9dc5ff; outline-offset:2px; }
+#simulation-dialog fieldset:disabled label { opacity:.55; cursor:not-allowed; box-shadow:none; }
+#simulation-dialog input[type=radio] { width:18px; height:18px; margin:0; accent-color:#167951; flex-shrink:0; }
+#simulation-dialog label strong { display:block; font-size:14px; }
+#simulation-dialog label small { display:block; color:#6c8098; font-size:12px; margin-top:4px; }
+#simulation-review-help { color:#708298; font-size:12px; margin:9px 0; }
+#simulation-status { color:#255b8a; font-size:13px; font-weight:700; min-height:20px; margin:8px 0; }
+#simulation-dialog .simulation-actions { border-top:1px solid #d9e3f0; padding-top:18px; margin-top:16px; }
+#simulation-dialog button { padding:11px 18px; border:1px solid #c5d5eb; border-radius:9px; background:white; color:#244d80; font-weight:750; cursor:pointer; transition:background .15s,transform .15s; }
+#simulation-dialog button:hover:not(:disabled) { background:#e7effc; transform:translateY(-1px); }
+#simulation-dialog #simulation-next { background:#0752b5; border-color:#0752b5; color:white; }
+#simulation-dialog #simulation-next:hover:not(:disabled) { background:#063c84; }
+#simulation-dialog button:disabled { opacity:.4; cursor:not-allowed; }
+#simulation-dialog button:focus-visible { outline:3px solid #9dc5ff; outline-offset:3px; }
+@media(max-width:600px) { #simulation-dialog { padding:18px; } #simulation-dialog .simulation-pair { gap:8px; } #simulation-dialog .simulation-pair figcaption { padding:10px; font-size:11px; } #simulation-dialog .simulation-pair p { padding:24px 10px; margin:8px; min-height:160px; font-size:12px; } #simulation-dialog button { padding:10px; } }
+@media(prefers-reduced-motion:reduce) { #simulation-dialog * { transition:none!important; } }
 </style>
 <link rel="stylesheet" href="{% static 'inventory/css/brand.css' %}">
 </head>
@@ -297,8 +348,20 @@
       <button id="form-width-reset" type="button" title="Restore the default form width">Reset width</button>
     </div>
     <div id="form-grid"></div>
+    <section id="night-upload" class="image-upload-box hidden" style="margin:12px 0" aria-labelledby="night-image-label">
+      <label id="night-image-label" for="night-file">Night simulation (optional)</label>
+      <a id="night-link" class="image-current-link hidden" target="_blank" rel="noopener noreferrer">View night simulation</a>
+      <img id="night-preview" class="image-preview hidden" alt="Night simulation preview">
+      <input id="night-file" class="image-upload-input" type="file" accept="image/jpeg,image/png,image/webp">
+      <div class="image-browse-row">
+        <label class="image-browse-button" for="night-file">Browse image</label>
+        <span id="night-file-name" class="image-file-name">No image selected</span>
+      </div>
+      <div class="image-upload-help">JPEG, PNG, or WebP. Maximum 20 MB. A new upload replaces the current image.</div>
+      <div id="night-status" class="image-upload-status" role="status"></div>
+    </section>
     <section id="inventory-image-upload" class="image-upload-box" aria-labelledby="inventory-image-label">
-      <label id="inventory-image-label">Image link</label>
+      <label id="inventory-image-label">Day simulation / Image link</label>
       <a id="image-current-link" class="image-current-link hidden" target="_blank" rel="noopener noreferrer">View current image</a>
       <img id="image-preview" class="image-preview hidden" alt="Selected inventory image preview" role="button" tabindex="0" aria-label="Open enlarged image viewer">
       <input id="field_IMAGE_LINK" class="image-upload-input" type="file" accept="image/jpeg,image/png,image/webp">
@@ -315,6 +378,7 @@
       <span id="delete-control" class="record-action-control"><button id="delete-btn" disabled>Delete</button></span>
       <span id="record-permission-message" class="sr-only" aria-live="polite"></span>
       <button id="clear-btn">Clear Form</button>
+      <button id="compare-simulations-btn" class="hidden" type="button">Compare Day and Night Simulation</button>
       <button id="export-btn" title="Export every record in this inventory type, regardless of page or search">Export All Records to Excel</button>
     </div>
     <div id="status"></div>
@@ -330,6 +394,7 @@
       <input id="search-box" type="text" placeholder="Search records...">
       <span id="record-count"></span>
     </div>
+    <p class="records-resize-help">Drag the bottom-right corner of the records table downward to show more rows.</p>
     <div id="table-scroll">
       <table>
         <thead><tr id="table-head"></tr></thead>
@@ -391,6 +456,23 @@
   </div>
 </aside>
 
+<dialog id="simulation-dialog" aria-labelledby="simulation-title">
+  <span class="simulation-eyebrow">SIGN INVENTORY · VISIBILITY REVIEW</span>
+  <h2 id="simulation-title">Compare Day and Night Simulation</h2>
+  <p id="simulation-record"></p>
+  <progress id="simulation-progress" max="1" value="0" aria-label="Record position"></progress>
+  <div class="simulation-pair">
+    <figure><figcaption id="simulation-day-caption">Day Simulation</figcaption><img id="simulation-day" alt="Day simulation"><p id="simulation-day-missing" hidden>No day image available. Upload a Day Simulation image in the entry form.</p></figure>
+    <figure><figcaption id="simulation-night-caption">Night Simulation</figcaption><img id="simulation-night" alt="Night simulation"><p id="simulation-night-missing" hidden>No night image available. Upload a Night Simulation image in the entry form.</p></figure>
+  </div>
+  <fieldset id="simulation-answer"><legend>Is the Night Simulation clearly visible?</legend>
+    <label><input type="radio" name="simulation-answer" value="Yes"><span><strong>Yes, clearly visible</strong><small>The night simulation looks correct</small></span></label>
+    <label><input type="radio" name="simulation-answer" value="No"><span><strong>No, needs attention</strong><small>The night simulation is not clear</small></span></label>
+  </fieldset>
+  <p id="simulation-review-help">Both images must load before you can review. Your choice saves automatically.</p>
+  <p id="simulation-status" role="status" aria-live="polite"></p>
+  <div class="simulation-actions"><button type="button" id="simulation-prev">← Previous</button><button type="button" id="simulation-close">Done</button><button type="button" id="simulation-next">Next record →</button></div>
+</dialog>
 <script>
 var csrfToken = '{{ csrf_token|escapejs }}';
 
@@ -506,6 +588,50 @@ var fieldEls = {};
 var autoEls = {};
 var datePickerEls = {};
 var tabDrafts = {};
+var pendingNightFile = null;
+var nightObjectUrl = null;
+var nightSavedUrl = '';
+var nightInput = document.getElementById('night-file');
+function showNightImage(url) {
+  document.getElementById('night-file-name').textContent = pendingNightFile ? pendingNightFile.name : (url ? 'No replacement selected' : 'No image selected');
+  if (nightObjectUrl) URL.revokeObjectURL(nightObjectUrl);
+  nightObjectUrl = pendingNightFile ? URL.createObjectURL(pendingNightFile) : null;
+  nightSavedUrl = url || '';
+  var src = nightObjectUrl || accessibleImageUrl(nightSavedUrl);
+  var preview = document.getElementById('night-preview');
+  var link = document.getElementById('night-link');
+  preview.src = src;
+  preview.classList.toggle('hidden', !src);
+  link.href = src;
+  link.classList.toggle('hidden', !src);
+}
+nightInput.addEventListener('change', function () {
+  pendingNightFile = nightInput.files[0] || null;
+  var status = document.getElementById('night-status');
+  status.textContent = '';
+  if (pendingNightFile && pendingNightFile.size > MAX_IMAGE_UPLOAD_BYTES) {
+    pendingNightFile = null;
+    nightInput.value = '';
+    status.textContent = 'Image must be 20 MB or smaller.';
+  }
+  showNightImage(nightSavedUrl);
+  saveCurrentDraft();
+});
+function uploadNightImage(record) {
+  if (currentTabKey !== 'sign' || !pendingNightFile) return Promise.resolve(record);
+  var data = new FormData();
+  data.append('image', pendingNightFile);
+  data.append('slot', 'night_simulation');
+  var status = document.getElementById('night-status');
+  status.textContent = 'Uploading night simulation...';
+  return fetch('/api/sign/records/' + record.ID + '/image', {
+    method: 'POST', headers: { 'X-CSRFToken': csrfToken }, body: data
+  }).then(parseApiResponse).then(function (res) {
+    if (!res.ok) { status.textContent = res.data.error || 'Night simulation upload failed.'; throw new Error(status.textContent); }
+    status.textContent = '';
+    return res.data.record;
+  });
+}
 var imageFileInput = document.getElementById('field_IMAGE_LINK');
 var imageLinkAnchor = document.getElementById('image-current-link');
 var imagePreview = document.getElementById('image-preview');
@@ -784,6 +910,8 @@ function loadSpecAndRecords() {
 }
 
 function buildForm() {
+  document.getElementById("compare-simulations-btn").classList.toggle("hidden", currentTabKey !== "sign");
+  document.getElementById("night-upload").classList.toggle("hidden", currentTabKey !== "sign");
   var grid = document.getElementById('form-grid');
   grid.innerHTML = '';
   fieldEls = {};
@@ -791,7 +919,7 @@ function buildForm() {
   datePickerEls = {};
 
   spec.columns.forEach(function (col, fieldIndex) {
-    if (col === 'IMAGE_LINK') return;
+    if (col === 'IMAGE_LINK' || col === 'NIGHT_SIMULATION') return;
     var wrap = el('div', { class: 'field-wrap' + (spec.wide_cols.includes(col) ? ' wide' : '') });
     wrap.style.setProperty('--field-delay', Math.min(fieldIndex * 22, 220) + 'ms');
     wrap.appendChild(el('label', { text: col.replace(/_/g, ' ') }));
@@ -939,10 +1067,10 @@ function saveCurrentDraft() {
     values[col] = getVal(col);
     if (values[col] !== '') hasValue = true;
   });
-  if (hasValue || editingId !== null || insertAfterId !== null || pendingImageFile) {
+  if (hasValue || editingId !== null || insertAfterId !== null || pendingImageFile || pendingNightFile) {
     tabDrafts[currentTabKey] = {
       values: values, editingId: editingId, canModify: editingCanModify,
-      insertAfterId: insertAfterId, imageFile: pendingImageFile
+      insertAfterId: insertAfterId, imageFile: pendingImageFile, nightFile: pendingNightFile, nightUrl: nightSavedUrl
     };
   } else {
     delete tabDrafts[currentTabKey];
@@ -951,6 +1079,9 @@ function saveCurrentDraft() {
 
 function restoreCurrentDraft() {
   var draft = tabDrafts[currentTabKey];
+  pendingNightFile = draft ? draft.nightFile || null : null;
+  nightInput.value = "";
+  showNightImage(draft ? draft.nightUrl : "");
   if (!draft) {
     pendingImageFile = null;
     editingId = null;
@@ -1289,7 +1420,7 @@ document.getElementById('add-btn').addEventListener('click', function () {
       if (!res.ok) { setStatus(res.data.error); return; }
       nextIdPreview = res.data.next_id;
       var savedRecord = res.data.record;
-      return uploadRecordImage(savedRecord).then(function (finalRecord) {
+      return uploadRecordImage(savedRecord).then(uploadNightImage).then(function (finalRecord) {
         if (requestedInsertAfterId === null && recordViewMode === 'inventory') replaceLocalRecord(finalRecord);
         setStatus('Record ' + finalRecord.ID + ' added.');
         clearForm(false);
@@ -1316,7 +1447,7 @@ document.getElementById('update-btn').addEventListener('click', function () {
   }).then(function (res) {
       if (!res.ok) { setStatus(res.data.error); return; }
       var savedRecord = res.data.record;
-      return uploadRecordImage(savedRecord).then(function (finalRecord) {
+      return uploadRecordImage(savedRecord).then(uploadNightImage).then(function (finalRecord) {
         replaceLocalRecord(finalRecord);
         setStatus('Record ' + finalRecord.ID + ' updated.');
         editingId = null;
@@ -1344,6 +1475,83 @@ document.getElementById('delete-btn').addEventListener('click', function () {
 
 document.getElementById('clear-btn').addEventListener('click', function () { clearForm(false); });
 
+var simulationDialog = document.getElementById('simulation-dialog');
+var simulationRecords = [];
+var simulationIndex = 0;
+var simulationSaving = false;
+var simulationLoaded = {day:false, night:false};
+function simulationControls() {
+  document.getElementById('simulation-prev').disabled = simulationSaving || simulationIndex === 0;
+  document.getElementById('simulation-next').disabled = simulationSaving || simulationIndex >= simulationRecords.length - 1;
+  document.getElementById('simulation-close').disabled = simulationSaving;
+  var row = simulationRecords[simulationIndex];
+  document.getElementById('simulation-answer').disabled = simulationSaving || !row || !row._CAN_EDIT || !simulationLoaded.day || !simulationLoaded.night;
+}
+function showSimulationRecord() {
+  var row = simulationRecords[simulationIndex];
+  var displayedRecordIndex = simulationIndex;
+  simulationLoaded = {day:false, night:false};
+  document.getElementById('simulation-progress').max = simulationRecords.length;
+  document.getElementById('simulation-progress').value = simulationIndex + 1;
+  document.getElementById('simulation-day-caption').textContent = 'Day Simulation — Record ID: ' + row.ID;
+  document.getElementById('simulation-night-caption').textContent = 'Night Simulation — Record ID: ' + row.ID;
+  document.getElementById('simulation-record').textContent = 'Record ' + row.ID + ' — ' + (simulationIndex + 1) + ' of ' + simulationRecords.length;
+  document.getElementById('simulation-status').textContent = row['Night Sumulation Visibility'] ? 'Saved: ' + row['Night Sumulation Visibility'] : 'Not reviewed. Select Yes or No to save.';
+  document.querySelectorAll('input[name="simulation-answer"]').forEach(function (input) { input.checked = input.value === row['Night Sumulation Visibility']; });
+  ['day', 'night'].forEach(function (kind) {
+    var img = document.getElementById('simulation-' + kind);
+    var missing = document.getElementById('simulation-' + kind + '-missing');
+    var url = accessibleImageUrl(row[kind === 'day' ? 'IMAGE_LINK' : 'NIGHT_SIMULATION'] || '');
+    img.onload = function () { if (simulationIndex !== displayedRecordIndex) return; simulationLoaded[kind] = true; simulationControls(); };
+    img.onerror = function () { if (simulationIndex !== displayedRecordIndex) return; img.hidden = true; missing.hidden = false; simulationLoaded[kind] = false; simulationControls(); };
+    img.hidden = !url;
+    missing.hidden = !!url;
+    if (url) img.src = url + (url.indexOf('?') === -1 ? '?' : '&') + 'review=' + encodeURIComponent(row._REVIEW_VERSION); else img.removeAttribute('src');
+  });
+  simulationControls();
+}
+function openSimulationComparison(recordId) {
+  apiRequest('/api/sign/records').then(function (res) {
+    if (!res.ok) throw new Error(res.data.error || 'Could not load records.');
+    simulationRecords = res.data.records;
+    simulationIndex = recordId == null ? 0 : simulationRecords.findIndex(function (row) { return row.ID === recordId; });
+    if (simulationIndex < 0) { setStatus('This record is no longer available. Refresh the records.'); return; }
+    if (!simulationRecords.length) { setStatus('No Sign records to review.'); return; }
+    if (!simulationDialog.open) simulationDialog.showModal();
+    showSimulationRecord();
+  }).catch(function (err) { setStatus(err.message); });
+}
+document.getElementById('compare-simulations-btn').addEventListener('click', function () { openSimulationComparison(); });
+function simulationCompareButton(record) {
+  var button = el('button', {type:'button', class:'record-compare-btn', text:'Compare', title:'Compare Day and Night Simulation for record ' + record.ID, 'aria-label':'Compare day and night simulation for record ' + record.ID});
+  button.addEventListener('click', function (event) { event.stopPropagation(); openSimulationComparison(record.ID); });
+  return button;
+}
+document.getElementById('simulation-prev').addEventListener('click', function () { if (!simulationSaving && simulationIndex > 0) { simulationIndex--; showSimulationRecord(); } });
+document.getElementById('simulation-next').addEventListener('click', function () { if (!simulationSaving && simulationIndex < simulationRecords.length - 1) { simulationIndex++; showSimulationRecord(); } });
+document.getElementById('simulation-close').addEventListener('click', function () { if (!simulationSaving) simulationDialog.close(); });
+simulationDialog.addEventListener('cancel', function (event) { if (simulationSaving) event.preventDefault(); });
+document.querySelectorAll('input[name="simulation-answer"]').forEach(function (input) {
+  input.addEventListener('change', function () {
+    var row = simulationRecords[simulationIndex];
+    simulationSaving = true;
+    simulationControls();
+    document.getElementById('simulation-status').textContent = 'Saving...';
+    apiRequest('/api/sign/records/' + row.ID + '/simulation-review', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({answer:input.value, version:row._REVIEW_VERSION})
+    }).then(function (res) {
+      if (!res.ok) throw new Error(res.data.error || 'Could not save review.');
+      simulationRecords[simulationIndex] = res.data.record;
+      var local = allRecords.find(function (record) { return record.ID === row.ID; });
+      if (local) { local['Night Sumulation Visibility'] = input.value; local._REVIEW_VERSION = res.data.record._REVIEW_VERSION; renderTable(); }
+      document.getElementById('simulation-status').textContent = 'Saved: ' + input.value;
+    }).catch(function (err) {
+      document.getElementById('simulation-status').textContent = err.message;
+      document.querySelectorAll('input[name="simulation-answer"]').forEach(function (radio) { radio.checked = radio.value === row['Night Sumulation Visibility']; });
+    }).finally(function () { simulationSaving = false; simulationControls(); });
+  });
+});
+
 document.getElementById('export-btn').addEventListener('click', function () {
   window.location.href = '/api/' + currentTabKey + '/export';
 });
@@ -1352,6 +1560,10 @@ document.getElementById('export-all-btn').addEventListener('click', function () 
 });
 
 function clearForm(keepSticky) {
+  pendingNightFile = null;
+  nightInput.value = "";
+  showNightImage("");
+  document.getElementById("night-status").textContent = "";
   var sticky = {};
   if (keepSticky) spec.sticky_fields.forEach(function (f) { sticky[f] = getVal(f); });
 
@@ -1385,6 +1597,9 @@ function clearForm(keepSticky) {
 }
 
 function loadRecord(record) {
+  pendingNightFile = null;
+  nightInput.value = "";
+  showNightImage(record.NIGHT_SIMULATION || "");
   insertAfterId = null;
   updateInsertMode();
   spec.columns.forEach(function (col) {
@@ -1425,12 +1640,13 @@ function buildTableHead() {
   var tr = document.getElementById('table-head');
   tr.innerHTML = '';
   if (recordViewMode === 'ai') {
+    if (currentTabKey === 'sign') tr.appendChild(el('th', {text:'Compare'}));
     aiDisplayColumns().forEach(function (column) {
       tr.appendChild(el('th', { text: column.replace(/_/g, ' ') }));
     });
     return;
   }
-  tr.appendChild(el('th', { text: 'Insert', class: 'insert-action-heading' }));
+  tr.appendChild(el('th', { text: currentTabKey === 'sign' ? 'Actions' : 'Insert', class: 'insert-action-heading' }));
   spec.columns.forEach(function (col) { tr.appendChild(el('th', { text: col.replace(/_/g, ' ') })); });
 }
 
@@ -1523,6 +1739,7 @@ function renderTable() {
   if (recordViewMode === 'ai') {
     pageRecords.forEach(function (rec) {
       var tr = el('tr', { 'data-ai-id': rec.ID, title: 'Select this AI detection to populate the inventory form' });
+      if (currentTabKey === 'sign') { var compareCell = el('td'); compareCell.appendChild(simulationCompareButton(rec)); tr.appendChild(compareCell); }
       aiDisplayColumns().forEach(function (column) {
         var value = rec[column] == null ? '' : rec[column];
         var cell = el('td');
@@ -1550,11 +1767,12 @@ function renderTable() {
       event.stopPropagation();
       beginInsertBelow(rec);
     });
+    if (currentTabKey === 'sign') insertCell.appendChild(simulationCompareButton(rec));
     insertCell.appendChild(insertButton);
     tr.appendChild(insertCell);
     spec.columns.forEach(function (col) {
       var td = el('td');
-      if (col === 'IMAGE_LINK' && rec[col]) {
+      if ((col === 'IMAGE_LINK' || col === 'NIGHT_SIMULATION') && rec[col]) {
         var accessibleUrl = accessibleImageUrl(rec[col]);
         var link = el('a', {
           class: 'record-image-link', href: accessibleUrl, target: '_blank',

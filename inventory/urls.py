@@ -4,6 +4,7 @@ from . import views
 from .forms import ApprovalAuthenticationForm, PasswordResetRequestForm
 
 urlpatterns = [
+    path("api/sign/records/<int:rec_id>/simulation-review", views.api_simulation_review, name="api_simulation_review"),
     path(
         "login/",
         auth_views.LoginView.as_view(

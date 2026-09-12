@@ -1,3 +1,4 @@
+from pathlib import Path
 import io
 import hashlib
 import json
@@ -40,6 +41,8 @@ from .image_storage import (
     FOLDER_SECTIONS,
     InventoryImageError,
     record_image_directory,
+    simulation_image_directory,
+    stored_image_path,
     save_record_image,
 )
 from .specs import (
@@ -159,7 +162,8 @@ def api_login_required(view):
 
 def parse_json_body(request):
     try:
-        return json.loads(request.body or b"{}")
+        value = json.loads(request.body or b"{}")
+        return value if isinstance(value, dict) else {}
     except (json.JSONDecodeError, UnicodeDecodeError):
         return {}
 
@@ -239,12 +243,14 @@ def can_modify_record(request, record):
 
 def record_api_row(request, record):
     row = record.as_row()
+    row.pop("_IMAGE_STORAGE", None)
     owner_name = "Legacy / unknown"
     if record.owner:
         owner_name = record.owner.get_full_name().strip() or record.owner.username
     row["_OWNER_NAME"] = owner_name
     row["_IS_OWN"] = record.owner_id == request.user.id
     row["_CAN_EDIT"] = can_modify_record(request, record)
+    row["_REVIEW_VERSION"] = record.updated_at.isoformat()
     return row
 
 
@@ -475,6 +481,9 @@ def api_records(request, key):
         row = {c: str(raw_row.get(c, "") or "") for c in spec["columns"]}
         row.pop("ID", None)
         row["IMAGE_LINK"] = ""
+        if key == "sign":
+            row["NIGHT_SIMULATION"] = ""
+            row["Night Sumulation Visibility"] = ""
         invalid_dates = invalid_date_fields(spec, row)
         if invalid_dates:
             return JsonResponse(
@@ -620,7 +629,11 @@ def api_record_detail(request, key, rec_id):
 
             # Preserve a user-uploaded image unless the MUTCD selection changes,
             # in which case the project's jurisdiction reference image applies.
+            row["_IMAGE_STORAGE"] = dict(rec.data.get("_IMAGE_STORAGE", {}))
             row["IMAGE_LINK"] = str(rec.data.get("IMAGE_LINK", "") or "")
+            if key == "sign":
+                row["NIGHT_SIMULATION"] = str(rec.data.get("NIGHT_SIMULATION", "") or "")
+                row["Night Sumulation Visibility"] = rec.data.get("Night Sumulation Visibility", "")
             if key == "sign" and rec.is_ai_processed:
                 for field in SIGN_AI_EXTRA_FIELDS:
                     row[field] = rec.data.get(field, "")
@@ -675,6 +688,9 @@ def api_record_detail(request, key, rec_id):
 def api_record_image(request, key, rec_id):
     if key not in TAB_ORDER:
         return JsonResponse({"error": "Unknown tab"}, status=404)
+    slot = request.POST.get("slot", "image")
+    if slot not in {"image", "night_simulation"} or (slot == "night_simulation" and key != "sign"):
+        return JsonResponse({"error": "Unknown image type"}, status=400)
     upload = request.FILES.get("image")
     if upload is None:
         return JsonResponse({"error": "Choose an image to upload."}, status=400)
@@ -688,7 +704,7 @@ def api_record_image(request, key, rec_id):
                 {"error": "Only the creator can replace this record's image."}, status=403
             )
         try:
-            filename, _ = save_record_image(key, rec_id, upload)
+            filename, _ = save_record_image(key, rec_id, upload, slot=slot, project=rec.project)
         except InventoryImageError as exc:
             logger.warning(
                 "Inventory image rejected: section=%s record=%s user=%s name=%r size=%s type=%r reason=%s",
@@ -711,8 +727,40 @@ def api_record_image(request, key, rec_id):
         # "your-server-address" or "localhost" for remote users.
         image_url = request.build_absolute_uri(image_path)
         data = dict(rec.data)
-        data["IMAGE_LINK"] = image_url
+        if key == "sign":
+            storage = dict(data.get("_IMAGE_STORAGE", {}))
+            path = simulation_image_directory(rec.project, rec_id, slot) / filename
+            storage[slot] = path.relative_to(Path(settings.INVENTORY_UPLOAD_ROOT)).as_posix()
+            data["_IMAGE_STORAGE"] = storage
+        data["NIGHT_SIMULATION" if slot == "night_simulation" else "IMAGE_LINK"] = image_url
+        if key == "sign":
+            data["Night Sumulation Visibility"] = ""
         data.pop("_MUTCD_REFERENCE_ID", None)
+        rec.data = data
+        rec.save(update_fields=["data", "updated_at"])
+    return JsonResponse({"record": record_api_row(request, rec)})
+
+
+@api_login_required
+@require_POST
+def api_simulation_review(request, rec_id):
+    body = parse_json_body(request)
+    answer = body.get("answer")
+    if answer not in ("Yes", "No"):
+        return JsonResponse({"error": "Choose Yes or No."}, status=400)
+    with locks["sign"]:
+        try:
+            rec = visible_tab_records(request, "sign").get(tab_record_id=rec_id)
+        except TabRecord.DoesNotExist:
+            return JsonResponse({"error": "Record not found"}, status=404)
+        if not can_modify_record(request, rec):
+            return JsonResponse({"error": "You cannot review this record."}, status=403)
+        if body.get("version") != rec.updated_at.isoformat():
+            return JsonResponse({"error": "This record changed. Close and reopen the comparison to review the latest images."}, status=409)
+        if not rec.data.get("IMAGE_LINK") or not rec.data.get("NIGHT_SIMULATION"):
+            return JsonResponse({"error": "Upload both day and night images before reviewing."}, status=400)
+        data = dict(rec.data)
+        data["Night Sumulation Visibility"] = answer
         rec.data = data
         rec.save(update_fields=["data", "updated_at"])
     return JsonResponse({"record": record_api_row(request, rec)})
@@ -722,13 +770,18 @@ def api_record_image(request, key, rec_id):
 @require_GET
 def inventory_image(request, folder, rec_id, filename):
     key = FOLDER_SECTIONS.get(folder)
-    if key is None or filename not in {"image.jpg", "image.png", "image.webp"}:
+    if key is None or filename not in {"image.jpg", "image.png", "image.webp", "night_simulation.jpg", "night_simulation.png", "night_simulation.webp"}:
         return JsonResponse({"error": "Image not found"}, status=404)
     try:
-        visible_tab_records(request, key).get(tab_record_id=rec_id)
+        rec = visible_tab_records(request, key).get(tab_record_id=rec_id)
     except TabRecord.DoesNotExist:
         return JsonResponse({"error": "Image not found"}, status=404)
-    path = record_image_directory(key, rec_id) / filename
+    slot = "night_simulation" if filename.startswith("night_simulation.") else "image"
+    path = stored_image_path(rec.data, slot)
+    if path is not None and path.name != filename:
+        return JsonResponse({"error": "Image not found"}, status=404)
+    if path is None:
+        path = record_image_directory(key, rec_id) / filename
     if not path.is_file():
         return JsonResponse({"error": "Image not found"}, status=404)
     content_type = {
@@ -736,7 +789,7 @@ def inventory_image(request, folder, rec_id, filename):
     }[path.suffix.lower()]
     response = FileResponse(path.open("rb"), content_type=content_type)
     response["Content-Disposition"] = f'inline; filename="{filename}"'
-    response["Cache-Control"] = "private, max-age=3600"
+    response["Cache-Control"] = "private, no-cache"
     return response
 
 
@@ -866,6 +919,22 @@ def api_options(request, key):
 # ---------------------------------------------------------------------------
 # Excel export
 # ---------------------------------------------------------------------------
+def export_image_links(request, row):
+    """Use the deployment hostname for application-owned image links."""
+    from urllib.parse import urlsplit
+
+    row = dict(row)
+    for field in ("IMAGE_LINK", "NIGHT_SIMULATION"):
+        value = str(row.get(field, "") or "")
+        try:
+            path = urlsplit(value).path
+        except ValueError:
+            continue
+        if path.startswith("/uploads/images/"):
+            row[field] = request.build_absolute_uri(path)
+    return row
+
+
 def write_sheet(key, ws, records):
     spec = get_spec(key)
     columns = spec["columns"]
@@ -874,7 +943,7 @@ def write_sheet(key, ws, records):
     header_fill = PatternFill(start_color="305496", end_color="305496", fill_type="solid")
     header_align = Alignment(horizontal="center", vertical="center")
 
-    ws.append(columns)
+    ws.append(["Night simulation" if c == "NIGHT_SIMULATION" else c for c in columns])
     for col_idx, _ in enumerate(columns, start=1):
         cell = ws.cell(row=1, column=col_idx)
         cell.font = header_font
@@ -914,6 +983,11 @@ def write_sheet(key, ws, records):
                     pass
             values.append(safe_excel_cell(val))
         ws.append(values)
+        if "NIGHT_SIMULATION" in columns:
+            cell = ws.cell(ws.max_row, columns.index("NIGHT_SIMULATION") + 1)
+            if str(cell.value or "").startswith(("http://", "https://")):
+                cell.hyperlink = cell.value
+                cell.style = "Hyperlink"
 
     for col_idx, col_name in enumerate(columns, start=1):
         max_len = len(col_name)
@@ -951,6 +1025,7 @@ def api_export(request, key):
     if not records:
         return JsonResponse({"error": "There are no records to export yet."}, status=400)
 
+    records = [export_image_links(request, row) for row in records]
     wb = Workbook()
     ws = wb.active
     ws.title = spec["export_sheet_name"]
@@ -967,7 +1042,7 @@ def api_export_all(request):
     for key in TAB_ORDER:
         with locks[key]:
             snapshots[key] = [
-                r.as_row()
+                export_image_links(request, r.as_row())
                 for r in visible_tab_records(request, key).order_by("display_order", "tab_record_id")
             ]
 
