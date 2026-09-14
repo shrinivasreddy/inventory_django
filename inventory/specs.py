@@ -43,6 +43,7 @@ def get_spec(key):
         for group in ("columns", "auto_fields", "wide_cols"):
             if "Night Sumulation Visibility" not in config[group]:
                 config[group].insert(max(0, len(config[group]) - 1), "Night Sumulation Visibility")
+    config["auto_fields"] = [f for f in config["auto_fields"] if f != "Night Sumulation Visibility"]
     return config
 
 

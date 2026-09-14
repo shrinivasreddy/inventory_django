@@ -348,18 +348,7 @@
       <button id="form-width-reset" type="button" title="Restore the default form width">Reset width</button>
     </div>
     <div id="form-grid"></div>
-    <section id="night-upload" class="image-upload-box hidden" style="margin:12px 0" aria-labelledby="night-image-label">
-      <label id="night-image-label" for="night-file">Night simulation (optional)</label>
-      <a id="night-link" class="image-current-link hidden" target="_blank" rel="noopener noreferrer">View night simulation</a>
-      <img id="night-preview" class="image-preview hidden" alt="Night simulation preview">
-      <input id="night-file" class="image-upload-input" type="file" accept="image/jpeg,image/png,image/webp">
-      <div class="image-browse-row">
-        <label class="image-browse-button" for="night-file">Browse image</label>
-        <span id="night-file-name" class="image-file-name">No image selected</span>
-      </div>
-      <div class="image-upload-help">JPEG, PNG, or WebP. Maximum 20 MB. A new upload replaces the current image.</div>
-      <div id="night-status" class="image-upload-status" role="status"></div>
-    </section>
+    <div id="simulation-upload-pair">
     <section id="inventory-image-upload" class="image-upload-box" aria-labelledby="inventory-image-label">
       <label id="inventory-image-label">Day simulation / Image link</label>
       <a id="image-current-link" class="image-current-link hidden" target="_blank" rel="noopener noreferrer">View current image</a>
@@ -372,6 +361,24 @@
       <div class="image-upload-help">JPEG, PNG, or WebP. Maximum 20 MB. A new upload replaces the current image.</div>
       <div id="image-upload-status" class="image-upload-status" role="status"></div>
     </section>
+    <section id="night-upload" class="image-upload-box hidden" style="margin:12px 0" aria-labelledby="night-image-label">
+      <label id="night-image-label" for="night-file">Night simulation (optional)</label>
+      <a id="night-link" class="image-current-link hidden" target="_blank" rel="noopener noreferrer">View night simulation</a>
+      <img id="night-preview" class="image-preview hidden" alt="Night simulation preview">
+      <input id="night-file" class="image-upload-input" type="file" accept="image/jpeg,image/png,image/webp">
+      <div class="image-browse-row">
+        <label class="image-browse-button" for="night-file">Browse image</label>
+        <span id="night-file-name" class="image-file-name">No image selected</span>
+      </div>
+      <div class="image-upload-help">JPEG, PNG, or WebP. Maximum 20 MB. A new upload replaces the current image.</div>
+      <div id="night-status" class="image-upload-status" role="status"></div>
+    </section>
+    </div>
+    <nav id="edit-navigation" hidden aria-label="Navigate records in edit mode">
+      <button id="edit-previous" type="button">← Previous</button>
+      <span id="edit-position" aria-live="polite"></span>
+      <button id="edit-next" type="button">Next →</button>
+    </nav>
     <div id="form-actions">
       <button id="add-btn">Add Record</button>
       <span id="update-control" class="record-action-control"><button id="update-btn" disabled>Update</button></span>
@@ -390,6 +397,7 @@
   </div>
 
   <div id="table-panel">
+    <div class="records-sticky-controls"><button id="records-collapse-toggle" type="button" aria-expanded="true" aria-controls="table-panel" title="Collapse records panel">›<span class="sr-only">Collapse records panel</span></button></div>
     <div id="search-row">
       <input id="search-box" type="text" placeholder="Search records...">
       <span id="record-count"></span>
@@ -456,6 +464,14 @@
   </div>
 </aside>
 
+<dialog id="edit-unsaved-dialog" aria-labelledby="edit-unsaved-title">
+  <h2 id="edit-unsaved-title">Save your changes?</h2>
+  <p>This record has unsaved changes. Save or discard them before moving.</p>
+  <p id="edit-save-error" role="alert"></p>
+  <button id="edit-stay" type="button">Stay here</button>
+  <button id="edit-discard" type="button">Discard and move</button>
+  <button id="edit-save" type="button">Save and move</button>
+</dialog>
 <dialog id="simulation-dialog" aria-labelledby="simulation-title">
   <span class="simulation-eyebrow">SIGN INVENTORY · VISIBILITY REVIEW</span>
   <h2 id="simulation-title">Compare Day and Night Simulation</h2>
@@ -617,6 +633,13 @@ nightInput.addEventListener('change', function () {
   showNightImage(nightSavedUrl);
   saveCurrentDraft();
 });
+function saveFormVisibility(record) {
+  var answer = getVal('Night Sumulation Visibility');
+  if (currentTabKey !== 'sign' || !answer || answer === record['Night Sumulation Visibility']) return Promise.resolve(record);
+  return apiRequest('/api/sign/records/' + record.ID + '/simulation-review', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({answer:answer, version:record._REVIEW_VERSION})
+  }).then(function (res) { if (!res.ok) throw new Error(res.data.error || 'Could not save visibility.'); return res.data.record; });
+}
 function uploadNightImage(record) {
   if (currentTabKey !== 'sign' || !pendingNightFile) return Promise.resolve(record);
   var data = new FormData();
@@ -643,6 +666,7 @@ var MAX_IMAGE_UPLOAD_BYTES = 20 * 1024 * 1024;
 var creatorOnlyTooltip = 'Only the creator can edit this record';
 
 function setRecordActionPermissions(canModify, hasRecord) {
+  updateEditNavigation();
   editingCanModify = Boolean(canModify && hasRecord);
   var updateButton = document.getElementById('update-btn');
   var deleteButton = document.getElementById('delete-btn');
@@ -705,10 +729,11 @@ function setLightboxScale(nextScale, anchorX, anchorY) {
   renderLightboxTransform();
 }
 
-function openImageLightbox() {
-  if (!imagePreview || !imagePreview.src || imagePreview.classList.contains('hidden')) return;
+function openImageLightbox(preview) {
+  preview = preview && preview.tagName === 'IMG' ? preview : imagePreview;
+  if (!preview || !preview.src || preview.classList.contains('hidden')) return;
   lightboxPreviousFocus = document.activeElement;
-  imageLightboxImage.src = imagePreview.src;
+  imageLightboxImage.src = preview.src;
   imageLightbox.classList.remove('hidden');
   document.body.classList.add('has-image-lightbox');
   resetLightboxView();
@@ -926,7 +951,21 @@ function buildForm() {
 
     var isConditional = spec.conditional_dropdowns && spec.conditional_dropdowns[col];
 
-    if (spec.auto_fields.includes(col)) {
+    if (col === 'Night Sumulation Visibility') {
+      var valueInput = el('input', {type:'hidden', id:'field_' + col, value:''});
+      fieldEls[col] = valueInput;
+      wrap.appendChild(valueInput);
+      var choices = el('div', {class:'visibility-choices', role:'radiogroup', 'aria-label':'Night Simulation Visibility'});
+      [['Yes', 'Clearly Visible'], ['No', 'Not Clearly Visible']].forEach(function (choice) {
+        var label = el('label');
+        var radio = el('input', {type:'radio', name:'form-night-visibility', value:choice[0]});
+        radio.addEventListener('change', function () { valueInput.value = radio.value; saveCurrentDraft(); });
+        label.appendChild(radio);
+        label.appendChild(el('span', {text:choice[1]}));
+        choices.appendChild(label);
+      });
+      wrap.appendChild(choices);
+    } else if (spec.auto_fields.includes(col)) {
       var display = el('div', { class: 'auto-field', id: 'auto_' + col, text: '' });
       wrap.appendChild(display);
       autoEls[col] = display;
@@ -1042,10 +1081,17 @@ function buildForm() {
         text: spec.project_jurisdiction || ''
       }));
       referenceCard.appendChild(referenceHeader);
-      referenceCard.appendChild(el('img', {
+      var referencePreview = el('img', {
         id: 'mutcd-reference-image', class: 'mutcd-reference-card__image hidden',
-        alt: 'Selected MUTCD code reference sign'
-      }));
+        alt: 'Selected MUTCD code reference sign', role: 'button', tabindex: '0',
+        title: 'Click to enlarge the reference sign', 'aria-label': 'Enlarge MUTCD reference sign'
+      });
+      referencePreview.addEventListener('click', function () { openImageLightbox(referencePreview); });
+      referencePreview.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openImageLightbox(referencePreview); }
+      });
+      referenceCard.appendChild(referencePreview);
+      referenceCard.appendChild(el('span', {class:'mutcd-reference-card__hint', text:'Click image to enlarge'}));
       referenceCard.appendChild(el('p', {
         id: 'mutcd-reference-caption', class: 'mutcd-reference-card__caption'
       }));
@@ -1126,6 +1172,7 @@ function getVal(col) {
 function setVal(col, val) {
   var e = fieldEls[col];
   if (e) e.value = val;
+  if (col === "Night Sumulation Visibility") document.querySelectorAll("input[name=form-night-visibility]").forEach(function (radio) { radio.checked = radio.value === val; });
   if (datePickerEls[col]) {
     var match = String(val || '').match(/^(\d{2})-(\d{2})-(\d{4})$/);
     datePickerEls[col].value = match ? match[3] + '-' + match[1] + '-' + match[2] : '';
@@ -1420,7 +1467,7 @@ document.getElementById('add-btn').addEventListener('click', function () {
       if (!res.ok) { setStatus(res.data.error); return; }
       nextIdPreview = res.data.next_id;
       var savedRecord = res.data.record;
-      return uploadRecordImage(savedRecord).then(uploadNightImage).then(function (finalRecord) {
+      return uploadRecordImage(savedRecord).then(uploadNightImage).then(saveFormVisibility).then(function (finalRecord) {
         if (requestedInsertAfterId === null && recordViewMode === 'inventory') replaceLocalRecord(finalRecord);
         setStatus('Record ' + finalRecord.ID + ' added.');
         clearForm(false);
@@ -1447,7 +1494,7 @@ document.getElementById('update-btn').addEventListener('click', function () {
   }).then(function (res) {
       if (!res.ok) { setStatus(res.data.error); return; }
       var savedRecord = res.data.record;
-      return uploadRecordImage(savedRecord).then(uploadNightImage).then(function (finalRecord) {
+      return uploadRecordImage(savedRecord).then(uploadNightImage).then(saveFormVisibility).then(function (finalRecord) {
         replaceLocalRecord(finalRecord);
         setStatus('Record ' + finalRecord.ID + ' updated.');
         editingId = null;
@@ -1560,6 +1607,7 @@ document.getElementById('export-all-btn').addEventListener('click', function () 
 });
 
 function clearForm(keepSticky) {
+  editBaseline = null;
   pendingNightFile = null;
   nightInput.value = "";
   showNightImage("");
@@ -1631,6 +1679,8 @@ function loadRecord(record) {
   refreshAutoFields();
   if (autoEls['ID']) autoEls['ID'].textContent = String(record.ID);
   setRecordActionPermissions(record._CAN_EDIT === true, true);
+  editBaseline = JSON.stringify(collectRow());
+  updateEditNavigation();
 }
 
 // ════════════════════════════════════════════
@@ -1720,7 +1770,78 @@ function selectAIProcessedRecord(record) {
   document.getElementById('form-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+var editBaseline = null;
+var editMoveTarget = null;
+var editSaving = false;
+function currentEditRecords() {
+  var query = document.getElementById('search-box').value.trim().toLowerCase();
+  return (recordViewMode === 'ai' ? aiProcessedRecords : allRecords).filter(function (rec) {
+    return !query || Object.keys(rec).some(function (key) { return String(rec[key] || '').toLowerCase().includes(query); });
+  });
+}
+function updateEditNavigation() {
+  var nav = document.getElementById('edit-navigation');
+  nav.hidden = editingId === null;
+  if (editingId === null) return;
+  var rows = currentEditRecords();
+  var index = rows.findIndex(function (row) { return row.ID === editingId; });
+  document.getElementById('edit-position').textContent = index < 0 ? 'Record outside current filter' : 'Record ' + (index + 1) + ' of ' + rows.length;
+  document.getElementById('edit-previous').disabled = editSaving || index <= 0;
+  document.getElementById('edit-next').disabled = editSaving || index < 0 || index >= rows.length - 1;
+}
+function moveToEditRecord(id) {
+  var rows = currentEditRecords();
+  var index = rows.findIndex(function (row) { return row.ID === id; });
+  if (index < 0) { setStatus('The next record is no longer in the current list.'); return; }
+  currentRecordPage = Math.floor(index / RECORDS_PER_PAGE) + 1;
+  loadRecord(rows[index]);
+  renderTable();
+}
+function requestEditMove(direction) {
+  if (editingId === null || editSaving) return;
+  var rows = currentEditRecords();
+  var index = rows.findIndex(function (row) { return row.ID === editingId; });
+  if (index < 0 || !rows[index + direction]) return;
+  editMoveTarget = rows[index + direction].ID;
+  if (pendingImageFile || pendingNightFile || JSON.stringify(collectRow()) !== editBaseline) {
+    document.getElementById('edit-save-error').textContent = '';
+    document.getElementById('edit-save').disabled = !editingCanModify;
+    document.getElementById('edit-unsaved-dialog').showModal();
+  } else moveToEditRecord(editMoveTarget);
+}
+document.getElementById('edit-previous').addEventListener('click', function () { requestEditMove(-1); });
+document.getElementById('edit-next').addEventListener('click', function () { requestEditMove(1); });
+var editUnsavedDialog = document.getElementById('edit-unsaved-dialog');
+document.getElementById('edit-stay').addEventListener('click', function () { editUnsavedDialog.close(); });
+document.getElementById('edit-discard').addEventListener('click', function () { editUnsavedDialog.close(); moveToEditRecord(editMoveTarget); });
+editUnsavedDialog.addEventListener('cancel', function (event) { if (editSaving) event.preventDefault(); });
+document.getElementById('edit-save').addEventListener('click', function () {
+  if (editSaving || !editingCanModify) return;
+  editSaving = true;
+  editUnsavedDialog.querySelectorAll('button').forEach(function (button) { button.disabled = true; });
+  updateEditNavigation();
+  apiRequest('/api/' + currentTabKey + '/records/' + editingId, {
+    method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({row:collectRow()})
+  }).then(function (res) {
+    if (!res.ok) throw new Error(res.data.error || 'Could not save record.');
+    return uploadRecordImage(res.data.record).then(uploadNightImage).then(saveFormVisibility);
+  }).then(function (record) {
+    [allRecords, aiProcessedRecords].forEach(function (rows) { var index = rows.findIndex(function (row) { return row.ID === record.ID; }); if (index >= 0) rows[index] = record; });
+    editBaseline = JSON.stringify(collectRow());
+    pendingImageFile = null; pendingNightFile = null;
+    editUnsavedDialog.close();
+    moveToEditRecord(editMoveTarget);
+  }).catch(function (error) {
+    document.getElementById('edit-save-error').textContent = 'Could not complete saving: ' + error.message + ' Your changes remain here; retry or stay on this record.';
+  }).finally(function () {
+    editSaving = false;
+    editUnsavedDialog.querySelectorAll('button').forEach(function (button) { button.disabled = false; });
+    updateEditNavigation();
+  });
+});
+
 function renderTable() {
+  updateEditNavigation();
   var query = document.getElementById('search-box').value.trim().toLowerCase();
   var body = document.getElementById('table-body');
   body.innerHTML = '';
@@ -2139,6 +2260,20 @@ formCollapseToggle.addEventListener('click', function () {
 window.addEventListener('resize', function () {
   setFormPanelWidth(storedFormPanelWidth(), false);
 });
+
+function setRecordsPanelCollapsed(collapsed, persist) {
+  document.body.classList.toggle('records-panel-collapsed', collapsed);
+  var toggle = document.getElementById('records-collapse-toggle');
+  toggle.setAttribute('aria-expanded', String(!collapsed));
+  toggle.title = collapsed ? 'Expand records panel' : 'Collapse records panel';
+  toggle.firstChild.textContent = collapsed ? '‹' : '›';
+  toggle.querySelector('.sr-only').textContent = toggle.title;
+  if (persist) { try { localStorage.setItem('inventoryRecordsPanelCollapsed', String(collapsed)); } catch (error) {} }
+}
+document.getElementById('records-collapse-toggle').addEventListener('click', function () {
+  setRecordsPanelCollapsed(!document.body.classList.contains('records-panel-collapsed'), true);
+});
+try { setRecordsPanelCollapsed(localStorage.getItem('inventoryRecordsPanelCollapsed') === 'true', false); } catch (error) {}
 
 setFormPanelWidth(storedFormPanelWidth(), false);
 setFormPanelCollapsed(window.localStorage.getItem('inventoryFormPanelCollapsed') === 'true', false);

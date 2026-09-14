@@ -559,3 +559,80 @@ tbody tr:hover {
   #form-panel, #table-panel, .field-wrap { animation: none; }
   #form-panel, .field-wrap, #form-resizer *, button, a, input, select, tbody tr { transition: none !important; }
 }
+
+/* Independent records panel and edit navigation. */
+.records-sticky-controls { position:sticky; top:0; z-index:5; display:flex; justify-content:flex-end; padding:0 0 12px; background:#fff; }
+#records-collapse-toggle { display:flex; align-items:center; justify-content:center; width:36px; height:42px; border:1px solid #b9cde7; border-radius:8px; background:#f5f9ff; color:#003879; font-size:26px; cursor:pointer; }
+#records-collapse-toggle:hover { background:#e0edff; }
+body.records-panel-collapsed #table-panel { flex:0 0 52px; width:52px; padding:8px; }
+body.records-panel-collapsed #table-panel > :not(.records-sticky-controls) { display:none; }
+body.records-panel-collapsed #form-panel { flex:1 1 auto; width:auto; }
+body.records-panel-collapsed #form-resizer { display:none; }
+body.form-panel-collapsed.records-panel-collapsed #form-panel { flex:1 1 auto; width:auto; padding:22px; overflow-y:auto; }
+body.form-panel-collapsed.records-panel-collapsed #form-panel > :not(.form-panel-sticky-controls) { display:revert; }
+body.form-panel-collapsed.records-panel-collapsed #form-panel #form-grid { display:grid; }
+body.form-panel-collapsed.records-panel-collapsed #form-panel #form-actions { display:flex; }
+#edit-navigation { display:flex; align-items:center; justify-content:space-between; gap:8px; margin:16px 0; padding:12px; background:#edf4ff; border:1px solid #cadbf0; border-radius:8px; }
+body.form-panel-collapsed.records-panel-collapsed #form-panel #edit-navigation { display:flex; }
+#form-panel #edit-navigation[hidden], #form-panel .hidden { display:none!important; }
+#edit-navigation button, #edit-unsaved-dialog button { padding:9px 12px; border:1px solid #b8cce7; border-radius:6px; color:#084282; background:white; cursor:pointer; }
+#edit-navigation button:disabled { opacity:.4; cursor:not-allowed; }
+#edit-position { font-size:12px; text-align:center; color:#163e71; }
+#edit-unsaved-dialog { max-width:480px; width:90vw; padding:24px; border:1px solid #c7d7ed; border-radius:14px; color:#163052; background:#f7faff; }
+#edit-unsaved-dialog::backdrop { background:#071b38a6; }
+#edit-save { background:#0752b5!important; color:white!important; }
+#edit-save-error { color:#a32222; }
+@media(max-width:900px) { body.records-panel-collapsed #table-panel { width:100%; flex-basis:auto; } body.records-panel-collapsed #form-panel { width:100%; } }
+
+/* Compact form fields, based on available panel width. */
+#form-panel { container-type:inline-size; }
+#form-panel #form-grid { gap:10px 14px; }
+#form-panel textarea { height:80px; min-height:80px; max-height:80px; resize:none; overflow:auto; }
+#form-panel .field-wrap label { margin-bottom:5px; }
+#form-panel .field-wrap input:not([type=radio]):not([type=hidden]), #form-panel .field-wrap select { min-height:36px; padding-top:7px; padding-bottom:7px; }
+#form-panel .visibility-choices { display:flex; flex-wrap:wrap; gap:8px; }
+#form-panel .visibility-choices label { display:flex; align-items:center; gap:8px; margin:0; padding:9px 12px; border:1px solid #c5d6ec; border-radius:7px; background:#f5f9ff; font-size:12px; letter-spacing:0; cursor:pointer; }
+#form-panel .visibility-choices input { width:16px; height:16px; margin:0; accent-color:#0752b5; }
+#form-panel .visibility-choices label:has(input:checked) { border-color:#0752b5; background:#e5efff; }
+#form-panel .visibility-choices label:focus-within { outline:2px solid #78a8ef; }
+@container (min-width:560px) {
+  #form-panel #form-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  #form-panel #form-grid .field-wrap.wide { grid-column:auto; }
+}
+@container (min-width:1000px) {
+  #form-panel #form-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
+}
+#form-panel #form-grid .field-wrap:has(textarea) { grid-column:1 / -1; }
+
+/* Match the day/night upload previews without stretching the form vertically. */
+#form-panel #simulation-upload-pair,
+body.form-panel-collapsed.records-panel-collapsed #form-panel #simulation-upload-pair {
+  display:grid; grid-template-columns:minmax(0,1fr); gap:14px; margin:12px 0;
+}
+#form-panel #simulation-upload-pair .image-upload-box { margin:0!important; min-width:0; }
+#simulation-upload-pair .image-preview { width:100%; height:240px; max-height:240px; object-fit:contain; }
+@container (min-width:680px) {
+  #form-panel #simulation-upload-pair,
+  body.form-panel-collapsed.records-panel-collapsed #form-panel #simulation-upload-pair {
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+  #simulation-upload-pair:not(:has(#night-upload:not(.hidden))) #inventory-image-upload { grid-column:1 / -1; }
+}
+
+/* A collapsed form must not expose children with their own grid/flex rules.
+   When both toggles are collapsed, the form intentionally remains expanded. */
+body.form-panel-collapsed:not(.records-panel-collapsed) #form-panel > :not(.form-panel-sticky-controls) {
+  display:none!important;
+}
+
+/* Keep automatically selected reference artwork compact within the field grid. */
+#form-panel #form-grid .mutcd-reference-card { grid-column:auto; align-self:start; min-width:0; padding:12px; border:1px solid #c9dbef; border-radius:10px; background:#f3f7fd; box-shadow:0 2px 8px #0a32600a; }
+#form-panel .mutcd-reference-card__header { align-items:center; flex-wrap:wrap; gap:5px; margin-bottom:10px; }
+#form-panel .mutcd-reference-card__title { color:#194e89; }
+#form-panel .mutcd-reference-card__jurisdiction { color:#637a94; text-align:left; }
+#form-panel .mutcd-reference-card__image { width:100%; max-width:300px; height:140px; max-height:140px; margin:0 auto; padding:8px; object-fit:contain; border:1px solid #d8e2ef; background:white; cursor:zoom-in; transition:border-color .15s,box-shadow .15s; }
+#form-panel .mutcd-reference-card__image:hover { border-color:#397bd0; box-shadow:0 3px 12px #1659ac22; }
+#form-panel .mutcd-reference-card__image:focus-visible { outline:3px solid #82b4f3; outline-offset:2px; }
+#form-panel .mutcd-reference-card__hint { display:block; text-align:center; color:#567ba4; font-size:10px; margin-top:5px; }
+#form-panel .mutcd-reference-card__caption { color:#355475; font-size:12px; margin:8px 0 0; overflow-wrap:anywhere; }
+@media(prefers-reduced-motion:reduce) { #form-panel .mutcd-reference-card__image { transition:none; } }

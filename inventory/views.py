@@ -479,11 +479,13 @@ def api_records(request, key):
         if not isinstance(raw_row, dict):
             return JsonResponse({"error": "Malformed request: 'row' must be an object."}, status=400)
         row = {c: str(raw_row.get(c, "") or "") for c in spec["columns"]}
+        if key == "sign" and row.get("Night Sumulation Visibility", "") not in ("", "Yes", "No"):
+            return JsonResponse({"error": "Choose Clearly Visible or Not Clearly Visible."}, status=400)
         row.pop("ID", None)
         row["IMAGE_LINK"] = ""
         if key == "sign":
             row["NIGHT_SIMULATION"] = ""
-            row["Night Sumulation Visibility"] = ""
+            row["Night Sumulation Visibility"] = raw_row.get("Night Sumulation Visibility", "")
         invalid_dates = invalid_date_fields(spec, row)
         if invalid_dates:
             return JsonResponse(
@@ -604,6 +606,8 @@ def api_record_detail(request, key, rec_id):
         if not isinstance(raw_row, dict):
             return JsonResponse({"error": "Malformed request: 'row' must be an object."}, status=400)
         row = {c: str(raw_row.get(c, "") or "") for c in spec["columns"]}
+        if key == "sign" and row.get("Night Sumulation Visibility", "") not in ("", "Yes", "No"):
+            return JsonResponse({"error": "Choose Clearly Visible or Not Clearly Visible."}, status=400)
         row.pop("ID", None)
         invalid_dates = invalid_date_fields(spec, row)
         if invalid_dates:
@@ -633,7 +637,7 @@ def api_record_detail(request, key, rec_id):
             row["IMAGE_LINK"] = str(rec.data.get("IMAGE_LINK", "") or "")
             if key == "sign":
                 row["NIGHT_SIMULATION"] = str(rec.data.get("NIGHT_SIMULATION", "") or "")
-                row["Night Sumulation Visibility"] = rec.data.get("Night Sumulation Visibility", "")
+                row["Night Sumulation Visibility"] = raw_row.get("Night Sumulation Visibility", rec.data.get("Night Sumulation Visibility", ""))
             if key == "sign" and rec.is_ai_processed:
                 for field in SIGN_AI_EXTRA_FIELDS:
                     row[field] = rec.data.get(field, "")
