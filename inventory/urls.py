@@ -1,9 +1,14 @@
 from django.urls import path
 from django.contrib.auth import views as auth_views
-from . import views
+from . import views, staging
 from .forms import ApprovalAuthenticationForm, PasswordResetRequestForm
 
 urlpatterns = [
+    path("api/sign/id-suggestion", views.api_sign_suggestion, name="api_sign_suggestion"),
+    path("api/<str:key>/staging", staging.staging, name="inventory_staging"),
+    path("api/<str:key>/staging/approve", staging.approve, name="inventory_staging_approve"),
+    path("api/<str:key>/staging/reject", staging.reject, name="inventory_staging_reject"),
+    path("api/<str:key>/staging/<int:row_id>", staging.staging_detail, name="inventory_staging_detail"),
     path("api/sign/records/<int:rec_id>/simulation-review", views.api_simulation_review, name="api_simulation_review"),
     path(
         "login/",

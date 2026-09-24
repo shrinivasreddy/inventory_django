@@ -394,3 +394,20 @@ class TabState(models.Model):
     mutcd_word_fallback = models.JSONField(default=dict)
     mutcd_reverse_map = models.JSONField(default=dict)
     type_map = models.JSONField(default=dict)
+
+
+class StagedInventoryRecord(models.Model):
+    project = models.ForeignKey(Project, on_delete=models.CASCADE)
+    owner = models.ForeignKey("auth.User", on_delete=models.CASCADE)
+    tab = models.CharField(max_length=20, db_index=True)
+    data = models.JSONField(default=dict)
+    revision = models.PositiveIntegerField(default=1)
+    inspection_date = models.DateField(null=True, blank=True)
+    source_file = models.CharField(max_length=255)
+    source_row = models.PositiveIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["pk"]
+        indexes = [models.Index(fields=["project", "tab", "owner"], name="staging_project_tab_owner")]

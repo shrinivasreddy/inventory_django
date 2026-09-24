@@ -1549,7 +1549,7 @@ class TabRecordAdmin(admin.ModelAdmin):
             )
             ws = workbook.create_sheet(spec["export_sheet_name"])
             export_columns = list(spec["columns"]) + ["ADDED_BY"]
-            self._style_sheet(ws, ["Night simulation" if c == "NIGHT_SIMULATION" else c for c in export_columns])
+            self._style_sheet(ws, ["Night Simulation Image" if c == "NIGHT_SIMULATION" else c for c in export_columns])
             for record in records:
                 from .views import export_image_links
                 row = export_image_links(request, record.as_row(include_owner=True))

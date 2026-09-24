@@ -519,8 +519,8 @@ class InventoryImageTests(TestCase):
             wb = Workbook()
             write_sheet("sign", wb.active, [row])
             headers = [c.value for c in wb.active[1]]
-            self.assertEqual(headers.count("Night simulation"), 1)
-            cell = wb.active.cell(2, headers.index("Night simulation") + 1)
+            self.assertEqual(headers.count("Night Simulation Image"), 1)
+            cell = wb.active.cell(2, headers.index("Night Simulation Image") + 1)
             self.assertEqual(cell.hyperlink.target, row["NIGHT_SIMULATION"])
             for section in ("pavement", "lane", "curb"):
                 self.assertNotIn("NIGHT_SIMULATION", get_spec(section)["columns"])

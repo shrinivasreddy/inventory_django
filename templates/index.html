@@ -398,8 +398,15 @@
 
   <div id="table-panel">
     <div class="records-sticky-controls"><button id="records-collapse-toggle" type="button" aria-expanded="true" aria-controls="table-panel" title="Collapse records panel">›<span class="sr-only">Collapse records panel</span></button></div>
+    <div id="inventory-upload-controls"><label class="inventory-upload-button" for="inventory-sheet-file">Upload Inventory Sheet</label><input id="inventory-sheet-file" type="file" accept=".xlsx,.csv" hidden><span id="inventory-upload-status" role="status">CSV / XLSX · Review in Staging before approval</span></div>
+    <section id="staging-panel" hidden aria-label="Inventory staging">
+      <div class="staging-toolbar staging-filters"><label>Status <select id="staging-filter"><option value="all">All rows</option><option value="OK">OK</option><option value="duplicate">Duplicates</option><option value="unclear">Condition unclear (?)</option></select></label><label>Sort <select id="staging-sort"><option value="source">Source order</option><option value="status">Status</option><option value="uid">SIGN UID</option></select></label><button id="staging-select" type="button">Select filtered</button><button id="staging-unselect" type="button">Clear selection</button><button id="staging-approve-selected" type="button">Approve Selected</button><button id="staging-reject-filtered" type="button">Reject filtered</button></div>
+      <p id="staging-status" role="status"></p><div id="staging-duplicates"></div><div class="staging-toolbar staging-pagination"><button id="staging-prev" type="button">Previous page</button><span id="staging-page-position" aria-live="polite"></span><button id="staging-next" type="button">Next page</button></div>
+      <div id="staging-empty" hidden><strong>No records to review</strong><p>Upload an inventory sheet to start reviewing rows here.</p></div><div class="staging-scroll"><table><thead id="staging-head"></thead><tbody id="staging-body"></tbody></table></div>
+    </section>
+
     <div id="search-row">
-      <input id="search-box" type="text" placeholder="Search records...">
+      <div class="records-search-field"><label for="search-box">Search records</label><input id="search-box" type="text" placeholder="Search by ID, street name, or any record value…" autocomplete="off"></div>
       <span id="record-count"></span>
     </div>
     <p class="records-resize-help">Drag the bottom-right corner of the records table downward to show more rows.</p>
@@ -489,7 +496,106 @@
   <p id="simulation-status" role="status" aria-live="polite"></p>
   <div class="simulation-actions"><button type="button" id="simulation-prev">← Previous</button><button type="button" id="simulation-close">Done</button><button type="button" id="simulation-next">Next record →</button></div>
 </dialog>
+{{ tabs|json_script:"inventory-tabs-data" }}
+<dialog id="destructive-dialog" aria-labelledby="destructive-title" aria-describedby="destructive-description">
+  <div class="destructive-icon" aria-hidden="true">!</div>
+  <h2 id="destructive-title"></h2>
+  <p id="destructive-description"></p>
+  <div class="destructive-actions"><button id="destructive-cancel" type="button" autofocus>Cancel</button><button id="destructive-confirm" type="button">Delete</button></div>
+</dialog>
+<style>
+#destructive-dialog { box-sizing:border-box; width:min(480px,calc(100vw - 32px)); max-height:85vh; overflow:auto; padding:28px; border:1px solid #e2e8f0; border-radius:18px; background:#fff; color:#183153; box-shadow:0 24px 80px #00153840; }
+#destructive-dialog::backdrop { background:#061a3d80; backdrop-filter:blur(3px); }
+.destructive-icon { display:grid; place-items:center; width:48px; height:48px; border-radius:14px; background:#fff0ec; color:#bd3527; font-size:28px; font-weight:700; }
+#destructive-dialog h2 { margin:18px 0 10px; font-size:23px; line-height:1.3; }
+#destructive-description { margin:0; color:#56677e; font-size:15px; line-height:1.65; overflow-wrap:anywhere; }
+.destructive-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:12px; margin-top:26px; }
+.destructive-actions button { min-height:44px; padding:10px 20px; border:1px solid #cad6e5; border-radius:9px; background:#f7f9fc; color:#284366; font-weight:700; cursor:pointer; transition:background .15s,box-shadow .15s; }
+#destructive-confirm { background:#b83226; border-color:#b83226; color:#fff; }
+#destructive-confirm:hover { background:#97271e; }
+#destructive-cancel:hover { background:#e9eff7; }
+.destructive-actions button:focus-visible { outline:3px solid #80aff0; outline-offset:3px; }
+@media(prefers-reduced-motion:reduce) { .destructive-actions button { transition:none; } }
+#operation-loading { border:1px solid #d6e2f5; border-radius:20px; padding:32px; width:min(360px,80vw); text-align:center; color:#12336a; background:#fff; box-shadow:0 24px 80px #00153840; }
+#operation-loading::backdrop { background:#061a3d66; backdrop-filter:blur(3px); }
+.operation-spinner { width:48px; height:48px; margin:0 auto 20px; border:4px solid #e1ebfa; border-top-color:#0755d9; border-right-color:#f47700; border-radius:50%; animation:operation-spin .85s linear infinite; }
+#operation-loading h2 { margin:0 0 10px; font-size:21px; }
+#operation-loading p { margin:0; color:#526580; line-height:1.6; }
+@keyframes operation-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion:reduce) { .operation-spinner { animation-duration:3s; } }
+</style>
+<dialog id="operation-loading" aria-labelledby="operation-loading-title" aria-describedby="operation-loading-detail">
+  <div class="operation-spinner" aria-hidden="true"></div>
+  <div role="status" aria-live="polite"><h2 id="operation-loading-title">Loading…</h2><p id="operation-loading-detail">Please wait while we update your records.</p></div>
+</dialog>
 <script>
+function confirmDestructive(title, description, actionLabel, action) {
+  var dialog = document.getElementById('destructive-dialog');
+  if (dialog.open) return;
+  document.getElementById('destructive-title').textContent = title;
+  document.getElementById('destructive-description').textContent = description;
+  document.getElementById('destructive-confirm').textContent = actionLabel;
+  document.getElementById('destructive-confirm').onclick = function () {
+    dialog.close();
+    this.onclick = null;
+    action();
+  };
+  document.getElementById('destructive-cancel').onclick = function () { dialog.close(); };
+  dialog.showModal();
+  document.getElementById('destructive-cancel').focus();
+}
+var activeOperations = 0;
+var loadingCloseTimer;
+var loadingSlowTimer;
+var loadingDialog = document.getElementById('operation-loading');
+loadingDialog.addEventListener('cancel', function(event) { event.preventDefault(); });
+function trackedFetch(url, options) {
+  clearTimeout(loadingCloseTimer);
+  activeOperations++;
+  var method = (options && options.method || 'GET').toUpperCase();
+  var title = method === 'DELETE' || /\/staging\/reject/.test(url) ? 'Deleting records…' : /\/export/.test(url) ? 'Preparing Excel download…' : method === 'GET' ? 'Loading records…' : 'Saving changes…';
+  document.getElementById('operation-loading-title').textContent = title;
+  document.getElementById('operation-loading-detail').textContent = 'Please wait. Your updated data will appear when finished.';
+  if (!loadingDialog.open) loadingDialog.showModal();
+  clearTimeout(loadingSlowTimer);
+  loadingSlowTimer = setTimeout(function() {
+    document.getElementById('operation-loading-detail').textContent = 'Still working. Larger operations can take a little longer. Please keep this page open.';
+  }, 10000);
+  // Keep the indicator active through the entire response download, not just headers.
+  return Promise.resolve().then(function() { return fetch(url, options); }).then(function(response) {
+    return response.arrayBuffer().then(function(body) {
+      return new Response(response.status === 204 || response.status === 205 || response.status === 304 ? null : body, {status:response.status, statusText:response.statusText, headers:response.headers});
+    });
+  }).finally(function() {
+    activeOperations--;
+    if (!activeOperations) {
+      clearTimeout(loadingSlowTimer);
+      // Chained refresh requests keep the same dialog open without flickering.
+      loadingCloseTimer = setTimeout(function() { if (!activeOperations && loadingDialog.open) loadingDialog.close(); }, 150);
+    }
+  });
+}
+
+function downloadInventory(url) {
+  return trackedFetch(url).then(function(response) {
+    if (!response.ok || !(response.headers.get('Content-Type') || '').includes('spreadsheet')) throw new Error('Download failed. Please check your session and try again.');
+    var disposition = response.headers.get('Content-Disposition') || '';
+    var match = disposition.match(/filename="?([^";]+)"?/);
+    return response.blob().then(function(blob) {
+      var link = document.createElement('a');
+      var objectUrl = URL.createObjectURL(blob);
+      link.href = objectUrl; link.download = match ? match[1] : 'inventory.xlsx';
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(function() { URL.revokeObjectURL(objectUrl); }, 60000);
+      setStatus('Excel download is ready.');
+    });
+  }).catch(function(error) { setStatus(error.message); });
+}
+var stagingEdit = null;
+var stagingRows = [];
+var stagingSelection = new Set();
+var stagingBusy = false;
+var stagingPage = 1;
 var csrfToken = '{{ csrf_token|escapejs }}';
 
 function jsonRequest(url, options) {
@@ -498,7 +604,7 @@ function jsonRequest(url, options) {
     'Content-Type': 'application/json',
     'X-CSRFToken': csrfToken
   });
-  return fetch(url, options);
+  return trackedFetch(url, options);
 }
 
 function parseApiResponse(response) {
@@ -515,11 +621,11 @@ function apiRequest(url, options) {
   options = options || {};
   var request = options.method && options.method !== 'GET'
     ? jsonRequest(url, options)
-    : fetch(url, options);
+    : trackedFetch(url, options);
   return request.then(parseApiResponse);
 }
 
-var TABS = {{ tabs_json|safe }};
+var TABS = JSON.parse(document.getElementById("inventory-tabs-data").textContent);
 var currentTabKey = TABS[0].key;
 var recordViewMode = 'inventory';
 var aiProcessedRecords = [];
@@ -647,7 +753,7 @@ function uploadNightImage(record) {
   data.append('slot', 'night_simulation');
   var status = document.getElementById('night-status');
   status.textContent = 'Uploading night simulation...';
-  return fetch('/api/sign/records/' + record.ID + '/image', {
+  return trackedFetch('/api/sign/records/' + record.ID + '/image', {
     method: 'POST', headers: { 'X-CSRFToken': csrfToken }, body: data
   }).then(parseApiResponse).then(function (res) {
     if (!res.ok) { status.textContent = res.data.error || 'Night simulation upload failed.'; throw new Error(status.textContent); }
@@ -894,22 +1000,28 @@ function buildRecordModeBar() {
   bar.innerHTML = '';
   [
     { key: 'inventory', label: 'Inventory Records' },
-    { key: 'ai', label: 'AI Processed' }
+    { key: 'ai', label: 'AI Processed' },
+    { key: 'staging', label: 'Staging' }
   ].forEach(function (mode) {
     var button = el('button', { type: 'button', text: mode.label });
+    button.setAttribute('aria-pressed', String(recordViewMode === mode.key));
     if (recordViewMode === mode.key) button.classList.add('active');
     button.addEventListener('click', function () {
+      if (recordViewMode === mode.key) return;
+      if (stagingEdit) { if (!confirm("Leave the staging editor and discard unsaved changes?")) return; clearForm(false); }
       recordViewMode = mode.key;
       currentRecordPage = 1;
       buildRecordModeBar();
+      bar.querySelector('[aria-pressed="true"]').focus({preventScroll:true});
       buildTableHead();
-      if (recordViewMode === 'ai') loadAIProcessedRecords(); else renderTable();
+      if (recordViewMode === 'staging') loadStaging(); else if (recordViewMode === 'ai') { showStaging(false); loadAIProcessedRecords(); } else { showStaging(false); renderTable(); }
     });
     bar.appendChild(button);
   });
 }
 
 function switchTab(key) {
+  stagingEdit = null; document.body.classList.remove("editing-staging"); showStaging(false);
   saveCurrentDraft();
   pendingImageFile = null;
   currentTabKey = key;
@@ -922,7 +1034,9 @@ function switchTab(key) {
 }
 
 function loadSpecAndRecords() {
-  apiRequest('/api/' + currentTabKey + '/spec').then(function (res) {
+  var requestedKey = currentTabKey;
+  apiRequest('/api/' + requestedKey + '/spec').then(function (res) {
+    if (requestedKey !== currentTabKey) return;
     if (!res.ok) throw new Error(res.data.error || 'Failed to load configuration.');
     var s = res.data;
     spec = s;
@@ -935,6 +1049,7 @@ function loadSpecAndRecords() {
 }
 
 function buildForm() {
+  document.getElementById("update-btn").textContent = stagingEdit ? "Save to Staging" : "Update";
   document.getElementById("compare-simulations-btn").classList.toggle("hidden", currentTabKey !== "sign");
   document.getElementById("night-upload").classList.toggle("hidden", currentTabKey !== "sign");
   var grid = document.getElementById('form-grid');
@@ -944,7 +1059,7 @@ function buildForm() {
   datePickerEls = {};
 
   spec.columns.forEach(function (col, fieldIndex) {
-    if (col === 'IMAGE_LINK' || col === 'NIGHT_SIMULATION') return;
+    if (!stagingEdit && (col === 'IMAGE_LINK' || col === 'NIGHT_SIMULATION')) return;
     var wrap = el('div', { class: 'field-wrap' + (spec.wide_cols.includes(col) ? ' wide' : '') });
     wrap.style.setProperty('--field-delay', Math.min(fieldIndex * 22, 220) + 'ms');
     wrap.appendChild(el('label', { text: col.replace(/_/g, ' ') }));
@@ -965,7 +1080,7 @@ function buildForm() {
         choices.appendChild(label);
       });
       wrap.appendChild(choices);
-    } else if (spec.auto_fields.includes(col)) {
+    } else if (spec.auto_fields.includes(col) && !stagingEdit) {
       var display = el('div', { class: 'auto-field', id: 'auto_' + col, text: '' });
       wrap.appendChild(display);
       autoEls[col] = display;
@@ -1100,8 +1215,7 @@ function buildForm() {
   });
 
   applyDefaultFieldValues();
-  restoreCurrentDraft();
-  refreshAutoFields();
+  if (!stagingEdit) { restoreCurrentDraft(); refreshAutoFields(); }
 }
 
 function saveCurrentDraft() {
@@ -1179,7 +1293,33 @@ function setVal(col, val) {
   }
 }
 
+var suggestedSignIds = {};
+var signSuggestionTimer;
+var signSuggestionVersion = 0;
+function requestSignIds(changedField) {
+  if (currentTabKey !== 'sign' || stagingEdit) return;
+  if (changedField === 'POLE_ID' || changedField === 'SIGN') delete suggestedSignIds[changedField];
+  if (!['LATITUDE','LONGITUDE','POLE_ID'].includes(changedField)) return;
+  clearTimeout(signSuggestionTimer);
+  var version = ++signSuggestionVersion;
+  signSuggestionTimer = setTimeout(function () {
+    var query = new URLSearchParams({LATITUDE:getVal('LATITUDE'), LONGITUDE:getVal('LONGITUDE'), POLE_ID:suggestedSignIds.POLE_ID === getVal('POLE_ID') ? '' : getVal('POLE_ID')});
+    fetch('/api/sign/id-suggestion?' + query).then(parseApiResponse).then(function(res) {
+      if (!res.ok || version !== signSuggestionVersion || currentTabKey !== 'sign' || stagingEdit) return;
+      ['POLE_ID','SIGN'].forEach(function(field) {
+        if (!getVal(field) || suggestedSignIds[field] === getVal(field)) {
+          setVal(field, res.data[field] || '');
+          suggestedSignIds[field] = res.data[field] || '';
+          if (fieldEls[field]) fieldEls[field].title = 'Suggested from this project. You can edit this value; automatic numbering is finalized on save.';
+        }
+      });
+      refreshAutoFields();
+    }).catch(function() { /* Suggestions are optional; save validates and allocates IDs. */ });
+  }, 350);
+}
 function onFieldChanged(changedField) {
+  if (stagingEdit) return;
+  requestSignIds(changedField);
   if (spec.mutcd_map && (changedField === 'MUTCD' || changedField === 'WORD_DESCRIPTION')) {
     syncMutcdLink(changedField);
   }
@@ -1393,6 +1533,9 @@ function collectRow() {
     }
     row[col] = spec.date_fields.includes(col) ? isoToStored(value) : value;
   });
+  if (currentTabKey === 'sign' && !stagingEdit) {
+    ['POLE_ID','SIGN'].forEach(function(field) { if (suggestedSignIds[field] && row[field] === suggestedSignIds[field]) row[field] = ''; });
+  }
   return row;
 }
 
@@ -1418,9 +1561,11 @@ function accessibleImageUrl(storedUrl) {
   if (!storedUrl) return '';
   try {
     var parsed = new URL(storedUrl, window.location.origin);
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return '';
     if (parsed.pathname.indexOf('/uploads/images/') === 0) {
       return parsed.pathname + parsed.search;
     }
+    if (parsed.origin === window.location.origin || (spec.image_origins || []).includes(parsed.origin)) return parsed.href;
   } catch (error) {
     return '';
   }
@@ -1434,7 +1579,7 @@ function uploadRecordImage(record) {
   var formData = new FormData();
   formData.append('image', pendingImageFile);
   imageUploadStatus.textContent = 'Uploading image...';
-  return fetch('/api/' + currentTabKey + '/records/' + record.ID + '/image', {
+  return trackedFetch('/api/' + currentTabKey + '/records/' + record.ID + '/image', {
     method: 'POST', headers: { 'X-CSRFToken': csrfToken }, body: formData
   }).then(parseApiResponse).then(function (res) {
     if (!res.ok) {
@@ -1488,6 +1633,7 @@ document.getElementById('add-btn').addEventListener('click', function () {
 });
 
 document.getElementById('update-btn').addEventListener('click', function () {
+  if (stagingEdit) { saveStagingEdit(); return; }
   if (editingId === null || !editingCanModify) return;
   apiRequest('/api/' + currentTabKey + '/records/' + editingId, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ row: collectRow() })
@@ -1509,7 +1655,7 @@ document.getElementById('update-btn').addEventListener('click', function () {
 
 document.getElementById('delete-btn').addEventListener('click', function () {
   if (editingId === null || !editingCanModify) return;
-  if (!confirm('Delete record ' + editingId + '? This cannot be undone.')) return;
+  confirmDestructive('Delete record ' + editingId + '?', 'This record will be permanently removed from live inventory. This cannot be undone.', 'Delete record', function () {
   apiRequest('/api/' + currentTabKey + '/records/' + editingId, { method: 'DELETE' })
     .then(function (res) {
       if (!res.ok) { setStatus(res.data.error); return; }
@@ -1518,6 +1664,7 @@ document.getElementById('delete-btn').addEventListener('click', function () {
       setStatus('Record deleted.');
       clearForm(false);
     }).catch(function (err) { setStatus(err.message); });
+  });
 });
 
 document.getElementById('clear-btn').addEventListener('click', function () { clearForm(false); });
@@ -1600,13 +1747,15 @@ document.querySelectorAll('input[name="simulation-answer"]').forEach(function (i
 });
 
 document.getElementById('export-btn').addEventListener('click', function () {
-  window.location.href = '/api/' + currentTabKey + '/export';
+  downloadInventory('/api/' + currentTabKey + '/export');
 });
 document.getElementById('export-all-btn').addEventListener('click', function () {
-  window.location.href = '/api/export_all';
+  downloadInventory('/api/export_all');
 });
 
 function clearForm(keepSticky) {
+  suggestedSignIds = {}; ++signSuggestionVersion; clearTimeout(signSuggestionTimer);
+  if (stagingEdit) { stagingEdit = null; document.body.classList.remove("editing-staging"); editingId = null; buildForm(); }
   editBaseline = null;
   pendingNightFile = null;
   nightInput.value = "";
@@ -1645,6 +1794,8 @@ function clearForm(keepSticky) {
 }
 
 function loadRecord(record) {
+  suggestedSignIds = {}; ++signSuggestionVersion; clearTimeout(signSuggestionTimer);
+  if (stagingEdit) { stagingEdit = null; document.body.classList.remove("editing-staging"); buildForm(); }
   pendingNightFile = null;
   nightInput.value = "";
   showNightImage(record.NIGHT_SIMULATION || "");
@@ -1741,7 +1892,9 @@ function beginInsertBelow(record) {
 }
 
 function loadRecords() {
-  apiRequest('/api/' + currentTabKey + '/records').then(function (res) {
+  var requestedKey = currentTabKey;
+  apiRequest('/api/' + requestedKey + '/records').then(function (res) {
+    if (requestedKey !== currentTabKey) return;
     if (!res.ok) throw new Error(res.data.error || 'Failed to load records.');
     var data = res.data;
     allRecords = data.records;
@@ -1753,7 +1906,9 @@ function loadRecords() {
 }
 
 function loadAIProcessedRecords() {
-  apiRequest('/api/' + currentTabKey + '/ai-processed').then(function (res) {
+  var requestedKey = currentTabKey;
+  apiRequest('/api/' + requestedKey + '/ai-processed').then(function (res) {
+    if (requestedKey !== currentTabKey) return;
     if (!res.ok) throw new Error(res.data.error || 'Failed to load AI processed rows.');
     aiProcessedRecords = res.data.records || [];
     currentRecordPage = 1;
@@ -1769,6 +1924,145 @@ function selectAIProcessedRecord(record) {
   );
   document.getElementById('form-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
+
+function showStaging(show) {
+  document.getElementById('staging-panel').hidden = !show;
+  ['search-row','table-scroll','record-pagination'].forEach(function (id) { document.getElementById(id).style.display = show ? 'none' : ''; });
+  document.querySelectorAll('.records-resize-help').forEach(function (node) { node.style.display = show ? 'none' : ''; });
+}
+function loadStaging() {
+  var key = currentTabKey;
+  return apiRequest('/api/' + key + '/staging').then(function (res) {
+    if (!res.ok) throw new Error(res.data.error || 'Could not load Staging.');
+    if (key !== currentTabKey) return;
+    stagingRows = res.data.records;
+    stagingSelection = new Set();
+    if (recordViewMode === 'staging') { showStaging(true); renderStaging(); }
+  }).catch(function (error) { setStatus(error.message); document.getElementById('staging-status').textContent = error.message; });
+}
+function filteredStaging() {
+  var filter = document.getElementById('staging-filter').value;
+  var rows = stagingRows.filter(function (row) { return filter === 'all' || (filter === 'OK' ? row.status === 'OK' : row[filter]); });
+  var sort = document.getElementById('staging-sort').value;
+  return rows.slice().sort(function (a,b) { return sort === 'status' ? a.status.localeCompare(b.status) : sort === 'uid' ? String(a.data.SIGN_UID || '').localeCompare(String(b.data.SIGN_UID || '')) : a.id-b.id; });
+}
+function stagingAction(row, action) {
+  var button = el('button', {type:'button', text:action});
+  button.disabled = stagingBusy || (action === 'Approve' && row.status !== 'OK');
+  button.addEventListener('click', function () {
+    if (action === 'Edit') editStagedRow(row);
+    if (action === 'Approve') approveStaged([row]);
+    if (action === 'Reject') {
+      confirmDestructive('Reject this staged row?', 'Source row ' + row.source_row + ' will be permanently deleted from Staging. Live inventory is unchanged.', 'Reject row', function () {
+      stagingMutation('/api/' + currentTabKey + '/staging/' + row.id, 'DELETE', {version:row.version});
+      });
+    }
+  });
+  return button;
+}
+function updateStagingSelection() {
+  document.getElementById('staging-approve-selected').disabled = stagingBusy || !stagingSelection.size;
+  document.getElementById('staging-unselect').disabled = stagingBusy || !stagingSelection.size;
+  document.getElementById('staging-approve-selected').textContent = 'Approve selected' + (stagingSelection.size ? ' (' + stagingSelection.size + ')' : '');
+}
+function renderStaging() {
+  var rows = filteredStaging();
+  updateStagingSelection();
+  document.getElementById('staging-select').disabled = stagingBusy || !rows.length;
+  document.getElementById('staging-empty').hidden = !!rows.length;
+  document.getElementById('staging-empty').innerHTML = stagingRows.length ? '<strong>No matching records</strong><p>Choose another status filter to see your staged rows.</p>' : '<strong>No records to review</strong><p>Upload an inventory sheet to start reviewing rows here.</p>';
+  document.getElementById('staging-reject-filtered').disabled = stagingBusy || !rows.length;
+  var head = document.getElementById('staging-head'); head.innerHTML='';
+  var tr = el('tr');
+  ['Select','Actions','Status'].concat(spec.columns).forEach(function (name) { tr.appendChild(el('th', {text:name})); }); head.appendChild(tr);
+  var body = document.getElementById('staging-body'); body.innerHTML='';
+  var pages = Math.max(1, Math.ceil(rows.length / 100));
+  stagingPage = Math.max(1, Math.min(stagingPage, pages));
+  document.getElementById('staging-page-position').textContent = 'Page ' + stagingPage + ' of ' + pages;
+  document.getElementById('staging-prev').disabled = stagingBusy || stagingPage === 1;
+  document.getElementById('staging-next').disabled = stagingBusy || stagingPage === pages;
+  rows.slice((stagingPage - 1) * 100, stagingPage * 100).forEach(function (row) {
+    var tr=el('tr'); var selection=el('td'); var check=el('input',{type:'checkbox','aria-label':'Select staged row ' + row.id}); check.checked=stagingSelection.has(row.id); check.disabled=stagingBusy;
+    check.addEventListener('change',function(){if(check.checked) stagingSelection.add(row.id); else stagingSelection.delete(row.id);updateStagingSelection();}); selection.appendChild(check); tr.appendChild(selection);
+    var actions=el('td'); ['Approve','Edit','Reject'].forEach(function(action){actions.appendChild(stagingAction(row,action));});tr.appendChild(actions);
+    var statusCell=el('td'); statusCell.appendChild(el('span',{class:'staging-status-badge' + (row.status === 'OK' ? ' is-ok' : ''),text:row.status}));tr.appendChild(statusCell);spec.columns.forEach(function(c){tr.appendChild(el('td',{text:row.data[c] || ''}));});body.appendChild(tr);
+  });
+  document.getElementById('staging-status').textContent=rows.length+' of '+stagingRows.length+' staged rows. Flagged rows must be resolved before approval.';
+  var duplicates=document.getElementById('staging-duplicates');duplicates.innerHTML='';
+  var visibleDuplicateKeys=new Set(rows.slice((stagingPage - 1) * 100, stagingPage * 100).filter(function(row){return row.duplicate;}).map(function(row){return String(row.data.SIGN_UID||'').trim().toLowerCase();}));
+  var groups={};stagingRows.filter(function(row){return row.duplicate && visibleDuplicateKeys.has(String(row.data.SIGN_UID||'').trim().toLowerCase());}).forEach(function(row){var key=String(row.data.SIGN_UID||'').trim().toLowerCase();(groups[key] ||= []).push(row);});
+  Object.keys(groups).forEach(function(key){
+    var section=el('section',{class:'staging-duplicate-group'});section.appendChild(el('h3',{text:'Duplicate SIGN_UID: '+groups[key][0].data.SIGN_UID}));
+    section.appendChild(el('p',{text:'Review versions side by side. Reject the unwanted row(s), then approve the remaining version.'}));
+    var pair=el('div',{class:'staging-duplicate-pair'});
+    groups[key].forEach(function(row){var card=el('article');card.appendChild(el('strong',{text:row.source+' · Row '+row.source_row}));
+      if(row.live_duplicate)card.appendChild(el('p',{text:'This UID also exists in live inventory. Reject this staged copy or correct its UID; approval cannot overwrite the live row.'}));
+      var dl=el('dl');spec.columns.forEach(function(c){dl.appendChild(el('dt',{text:c}));dl.appendChild(el('dd',{text:row.data[c]||'—'}));});card.appendChild(dl);card.appendChild(stagingAction(row,'Edit'));card.appendChild(stagingAction(row,'Reject'));pair.appendChild(card);});section.appendChild(pair);duplicates.appendChild(section);
+  });
+}
+function stagingMutation(url, method, body) {
+  if (stagingBusy) return Promise.resolve();
+  var key = currentTabKey;
+  var editedRow = stagingEdit;
+  var failure = '';
+  stagingBusy = true;
+  renderStaging();
+  return apiRequest(url, {method:method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}).then(function (res) {
+    if (!res.ok) throw new Error(res.data.error || 'Staging action failed.');
+    if (key !== currentTabKey) return;
+    var affectsEditor = editedRow && (url.endsWith('/' + editedRow.id) || (body.rows || []).some(function (row) { return row.id === editedRow.id; }));
+    if (affectsEditor && stagingEdit === editedRow) {
+      stagingEdit = null;
+      document.body.classList.remove('editing-staging');
+      clearForm(false);
+      buildForm();
+    }
+    return loadStaging().then(function () { loadRecords(); });
+  }).catch(function (error) {
+    failure = error.message;
+    if (key === currentTabKey) setStatus(failure);
+  }).finally(function () {
+    stagingBusy = false;
+    if (key === currentTabKey) {
+      renderStaging();
+      if (failure) document.getElementById('staging-status').textContent = failure;
+    }
+  });
+}
+function approveStaged(rows){if(!rows.length){setStatus('Select rows to approve.');return;}return stagingMutation('/api/'+currentTabKey+'/staging/approve','POST',{rows:rows.map(function(row){return{id:row.id,version:row.version};})});}
+function rejectFilteredStaged() {
+  if (stagingBusy) return;
+  var rows = filteredStaging();
+  if (!rows.length) return;
+  var filter = document.getElementById('staging-filter');
+  var label = filter.options[filter.selectedIndex].text;
+  return confirmDestructive('Reject ' + rows.length + ' staged rows?', 'Filter: ' + label + '. All matching rows across every page will be permanently deleted, including every matching duplicate version. Live inventory is unchanged. This cannot be undone.', 'Reject ' + rows.length + ' rows', function () {
+    return stagingMutation('/api/' + currentTabKey + '/staging/reject', 'POST', {rows:rows.map(function(row){return {id:row.id,version:row.version};})});
+  });
+}
+function editStagedRow(row){
+  if (stagingEdit && !confirm("Discard unsaved staging edits and open another row?")) return;
+  stagingEdit=row;document.body.classList.add('editing-staging');editingId=null;buildForm();
+  spec.columns.forEach(function(c){setVal(c,spec.date_fields.includes(c)?storedToIso(row.data[c]||''):row.data[c]||'');});
+  editingId=row.id;setRecordActionPermissions(true,true);document.getElementById('update-btn').textContent='Save to Staging';
+  setFormPanelCollapsed(false,true);setStatus('Editing staged row '+row.source_row+'. Saving does not approve it.');document.getElementById('form-panel').scrollIntoView({block:'start'});
+}
+function saveStagingEdit(){var data=Object.assign({},stagingEdit.data);spec.columns.forEach(function(c){var v=getVal(c);data[c]=spec.date_fields.includes(c)?isoToStored(v):v;});stagingMutation('/api/'+currentTabKey+'/staging/'+stagingEdit.id,'PUT',{row:data,version:stagingEdit.version});}
+document.getElementById('inventory-sheet-file').addEventListener('change',function(){
+  var input=this,file=input.files[0];if(!file)return;var key=currentTabKey;var data=new FormData();data.append('file',file);input.disabled=true;
+  document.getElementById('inventory-upload-status').textContent='Uploading to Staging...';
+  trackedFetch('/api/'+key+'/staging',{method:'POST',headers:{'X-CSRFToken':csrfToken},body:data}).then(parseApiResponse).then(function(res){
+    if(!res.ok)throw new Error(res.data.error||'Upload failed.');document.getElementById('inventory-upload-status').textContent=res.data.imported+' rows staged. Nothing added to live inventory.';
+    if(key===currentTabKey){recordViewMode='staging';buildRecordModeBar();return loadStaging();}
+  }).catch(function(error){document.getElementById('inventory-upload-status').textContent=error.message;}).finally(function(){input.disabled=false;input.value='';});
+});
+['staging-filter','staging-sort'].forEach(function(id){document.getElementById(id).addEventListener('change',function(){stagingPage=1;renderStaging();});});
+document.getElementById('staging-prev').addEventListener('click',function(){stagingPage--;renderStaging();});
+document.getElementById('staging-next').addEventListener('click',function(){stagingPage++;renderStaging();});
+document.getElementById('staging-select').addEventListener('click',function(){filteredStaging().forEach(function(row){stagingSelection.add(row.id);});renderStaging();});
+document.getElementById('staging-unselect').addEventListener('click',function(){stagingSelection.clear();renderStaging();});
+document.getElementById('staging-approve-selected').addEventListener('click',function(){approveStaged(stagingRows.filter(function(row){return stagingSelection.has(row.id);}));});
+document.getElementById('staging-reject-filtered').addEventListener('click', rejectFilteredStaged);
 
 var editBaseline = null;
 var editMoveTarget = null;
@@ -1841,6 +2135,7 @@ document.getElementById('edit-save').addEventListener('click', function () {
 });
 
 function renderTable() {
+  if (recordViewMode === "staging") { renderStaging(); return; }
   updateEditNavigation();
   var query = document.getElementById('search-box').value.trim().toLowerCase();
   var body = document.getElementById('table-body');
@@ -2104,7 +2399,7 @@ if (SpeechRecognition) {
           var blob = new Blob(voiceChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
           var formData = new FormData();
           formData.append('audio', blob, 'inventory-voice.webm');
-          fetch('/api/assistant/transcribe', {
+          trackedFetch('/api/assistant/transcribe', {
             method: 'POST',
             headers: { 'X-CSRFToken': csrfToken },
             body: formData

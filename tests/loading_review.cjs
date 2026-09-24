@@ -1,0 +1,28 @@
+const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
+const html=fs.readFileSync('templates/index.html','utf8');
+const nodes={};
+const document={getElementById(id){return nodes[id] ||= {textContent:'',open:false,addEventListener(){},showModal(){this.open=true;},close(){this.open=false;}};}};
+let finish;
+const context={document,Response,Promise,setTimeout,clearTimeout,fetch:()=>new Promise(resolve=>{finish=resolve;})};
+vm.createContext(context);
+vm.runInContext(html.slice(html.indexOf('var activeOperations ='),html.indexOf('function downloadInventory(')),context);
+(async()=>{
+  const request=context.trackedFetch('/api/sign/staging/reject',{method:'POST'});
+  assert.equal(nodes['operation-loading'].open,true);
+  assert.equal(nodes['operation-loading-title'].textContent,'Deleting records…');
+  await Promise.resolve();
+  let releaseBody;
+  finish({status:200,statusText:'OK',headers:{},arrayBuffer:()=>new Promise(resolve=>{releaseBody=resolve;})});
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(nodes['operation-loading'].open,true);
+  releaseBody(new TextEncoder().encode('{}').buffer);
+  await request;
+  await new Promise(resolve=>setTimeout(resolve,180));
+  assert.equal(nodes['operation-loading'].open,false);
+  context.fetch=()=>Promise.reject(new Error('Network error'));
+  await assert.rejects(context.trackedFetch('/api/sign/records'),/Network error/);
+  await new Promise(resolve=>setTimeout(resolve,180));
+  assert.equal(nodes['operation-loading'].open,false);
+  assert.equal(context.activeOperations,0);
+  console.log('PASS: loading covers response body and clears on success and network failure.');
+})().catch(error=>{console.error(error);process.exitCode=1;});

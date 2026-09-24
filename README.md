@@ -174,3 +174,13 @@ because browsers will then withhold the authentication cookies.
 ## Simulation review release
 
 See [the deployment guide](deploy/SIMULATION_RELEASE.md) for releasing the day/night upload and comparison changes. Use an isolated environment with `requirements.txt`; the previous global Python installation used Django 4.2 rather than the pinned Django 5.2.
+
+## Upload Inventory Sheet and Staging
+
+The Upload Inventory Sheet button in each inventory page accepts UTF-8 CSV or XLSX. Use that section's export headers. XLSX imports use the section's named export sheet if present, otherwise the active sheet. Each upload is limited to 10,000 rows and the configured workbook byte limits. Uploads go only to the Staging tab; the AI-Processed import is separate and unchanged.
+
+Reviewers see their own staged rows in the selected project; staff can review all staged rows in that project. Status can be filtered and sorted. Duplicate Sign UIDs (including existing live UIDs) and `?` sign conditions block approval. Reject unwanted staged versions or edit the UID/condition, then approve. Bulk approval is atomic: if any selected row is flagged or stale, none of the selection moves. Rejection permanently deletes the staged row. Approval creates new live record IDs and removes the staging entries.
+
+Dates are stored as DateField values in Staging, displayed as MM-DD-YYYY, and exported as Excel date cells. Whitespace is trimmed; SHEETING_MATERIAL None/NA becomes None and LEVEL(R) NA becomes blank. To preserve the app's existing image-link field, NIGHT_SIMULATION Y/N/NV/NA codes map to the visibility Yes/No field; the normalized Y/N code is retained internally. Image links remain separate.
+
+Apply migration `0019_stagedinventoryrecord` and run collectstatic when deploying this feature. Back up the server database and uploads first. A local pre-migration SQLite backup was saved under logs during development; do not deploy that local database over server data.

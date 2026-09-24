@@ -19,7 +19,9 @@ class SecurityHeadersMiddleware:
             "Content-Security-Policy",
             "default-src 'self'; script-src 'self' 'unsafe-inline'; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-            "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; "
+            "font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: "
+            + " ".join(settings.INVENTORY_IMAGE_ORIGINS) + "; "
+            +
             "connect-src 'self'; object-src 'none'; base-uri 'self'; "
             "frame-ancestors 'none'; form-action 'self'",
         )

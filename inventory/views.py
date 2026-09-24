@@ -315,7 +315,7 @@ def home(request):
     if not projects:
         return render(request, "no_projects.html")
     return render(request, "index.html", {
-        "tabs_json": json.dumps(tabs),
+        "tabs": tabs,
         "projects": projects,
         "selected_project": selected_project(request),
     })
@@ -427,6 +427,7 @@ def api_spec(request, key):
         "text_fields": spec["text_fields"],
         "auto_fields": spec["auto_fields"],
         "image_field": "IMAGE_LINK",
+        "image_origins": settings.INVENTORY_IMAGE_ORIGINS,
         "max_image_upload_bytes": settings.MAX_INVENTORY_IMAGE_BYTES,
         "date_fields": spec["date_fields"],
         "uid_field": spec["uid_field"],
@@ -457,7 +458,36 @@ def api_spec(request, key):
 # ---------------------------------------------------------------------------
 # Records: GET (list) / POST (add) / DELETE (delete-all)
 # ---------------------------------------------------------------------------
+def serialize_sign_save(view):
+    @wraps(view)
+    def wrapped(request, key, *args, **kwargs):
+        if key != 'sign' or request.method not in {'POST', 'PUT'}:
+            return view(request, key, *args, **kwargs)
+        project, error = require_selected_project(request)
+        if error:
+            return error
+        with locks[key], transaction.atomic():
+            # Acquire a database write lock before reading IDs, including on SQLite.
+            Project.objects.filter(pk=project.pk).update(name=F('name'))
+            response = view(request, key, *args, **kwargs)
+            if response.status_code >= 400:
+                transaction.set_rollback(True)
+            return response
+    return wrapped
+
+
 @api_login_required
+@require_GET
+def api_sign_suggestion(request):
+    from .sign_numbering import suggest
+    project, error = require_selected_project(request)
+    if error:
+        return error
+    return JsonResponse(suggest(project, request.GET))
+
+
+@api_login_required
+@serialize_sign_save
 def api_records(request, key):
     if key not in TAB_ORDER:
         return JsonResponse({"error": "Unknown tab"}, status=404)
@@ -478,14 +508,14 @@ def api_records(request, key):
         raw_row = body.get("row")
         if not isinstance(raw_row, dict):
             return JsonResponse({"error": "Malformed request: 'row' must be an object."}, status=400)
-        row = {c: str(raw_row.get(c, "") or "") for c in spec["columns"]}
+        row = {c: str(raw_row.get(c) if raw_row.get(c) is not None else "") for c in spec["columns"]}
         if key == "sign" and row.get("Night Sumulation Visibility", "") not in ("", "Yes", "No"):
             return JsonResponse({"error": "Choose Clearly Visible or Not Clearly Visible."}, status=400)
         row.pop("ID", None)
         row["IMAGE_LINK"] = ""
         if key == "sign":
             row["NIGHT_SIMULATION"] = ""
-            row["Night Sumulation Visibility"] = raw_row.get("Night Sumulation Visibility", "")
+            row["Night Sumulation Visibility"] = str(raw_row.get("Night Sumulation Visibility") or "")
         invalid_dates = invalid_date_fields(spec, row)
         if invalid_dates:
             return JsonResponse(
@@ -500,6 +530,11 @@ def api_records(request, key):
             ts_dict = get_section_state(key)
             if key == "sign":
                 row = apply_project_mutcd_reference(request, project, row)
+                from .sign_numbering import suggest
+                try:
+                    row.update(suggest(project, row, allocate=True))
+                except ValueError as exc:
+                    return JsonResponse({'error': str(exc)}, status=400)
             row = compute_auto_fields(key, row, ts_dict)
             missing = missing_required_fields(key, row)
             if missing:
@@ -595,6 +630,7 @@ def api_ai_processed_records(request, key):
 # Single record: PUT (update) / DELETE
 # ---------------------------------------------------------------------------
 @api_login_required
+@serialize_sign_save
 def api_record_detail(request, key, rec_id):
     if key not in TAB_ORDER:
         return JsonResponse({"error": "Unknown tab"}, status=404)
@@ -605,7 +641,7 @@ def api_record_detail(request, key, rec_id):
         raw_row = body.get("row")
         if not isinstance(raw_row, dict):
             return JsonResponse({"error": "Malformed request: 'row' must be an object."}, status=400)
-        row = {c: str(raw_row.get(c, "") or "") for c in spec["columns"]}
+        row = {c: str(raw_row.get(c) if raw_row.get(c) is not None else "") for c in spec["columns"]}
         if key == "sign" and row.get("Night Sumulation Visibility", "") not in ("", "Yes", "No"):
             return JsonResponse({"error": "Choose Clearly Visible or Not Clearly Visible."}, status=400)
         row.pop("ID", None)
@@ -637,7 +673,7 @@ def api_record_detail(request, key, rec_id):
             row["IMAGE_LINK"] = str(rec.data.get("IMAGE_LINK", "") or "")
             if key == "sign":
                 row["NIGHT_SIMULATION"] = str(rec.data.get("NIGHT_SIMULATION", "") or "")
-                row["Night Sumulation Visibility"] = raw_row.get("Night Sumulation Visibility", rec.data.get("Night Sumulation Visibility", ""))
+                row["Night Sumulation Visibility"] = str(raw_row.get("Night Sumulation Visibility", rec.data.get("Night Sumulation Visibility", "")) or "")
             if key == "sign" and rec.is_ai_processed:
                 for field in SIGN_AI_EXTRA_FIELDS:
                     row[field] = rec.data.get(field, "")
@@ -649,6 +685,11 @@ def api_record_detail(request, key, rec_id):
                 row = apply_project_mutcd_reference(
                     request, rec.project, row, existing_data=rec.data
                 )
+                from .sign_numbering import suggest
+                try:
+                    row.update(suggest(rec.project, row, exclude_pk=rec.pk, allocate=True))
+                except ValueError as exc:
+                    return JsonResponse({'error': str(exc)}, status=400)
             row = compute_auto_fields(key, row, ts_dict)
             missing = missing_required_fields(key, row)
             if missing:
@@ -947,7 +988,7 @@ def write_sheet(key, ws, records):
     header_fill = PatternFill(start_color="305496", end_color="305496", fill_type="solid")
     header_align = Alignment(horizontal="center", vertical="center")
 
-    ws.append(["Night simulation" if c == "NIGHT_SIMULATION" else c for c in columns])
+    ws.append(["Night Simulation Image" if c == "NIGHT_SIMULATION" else c for c in columns])
     for col_idx, _ in enumerate(columns, start=1):
         cell = ws.cell(row=1, column=col_idx)
         cell.font = header_font
@@ -985,8 +1026,15 @@ def write_sheet(key, ws, records):
                     val = int(fval) if fval.is_integer() else fval
                 except (TypeError, ValueError):
                     pass
+            if c == "INSP_DATE" and val:
+                try:
+                    val = datetime.strptime(str(val), "%m-%d-%Y").date()
+                except ValueError:
+                    pass
             values.append(safe_excel_cell(val))
         ws.append(values)
+        if "INSP_DATE" in columns:
+            ws.cell(ws.max_row, columns.index("INSP_DATE") + 1).number_format = "mm-dd-yyyy"
         if "NIGHT_SIMULATION" in columns:
             cell = ws.cell(ws.max_row, columns.index("NIGHT_SIMULATION") + 1)
             if str(cell.value or "").startswith(("http://", "https://")):

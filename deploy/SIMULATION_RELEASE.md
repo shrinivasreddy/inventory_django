@@ -1,6 +1,6 @@
 # Deploy the simulation review update
 
-This release adds separate Sign day/night uploads, per-record comparison, and the `Night Sumulation Visibility` Yes/No export column. No database schema migration is introduced; fields are stored in existing record JSON. Existing image paths remain readable. Replacing either image clears its review answer.
+This release adds separate Sign day/night uploads, per-record comparison, and the `Night Sumulation Visibility` Yes/No export column. Database migrations 0019 and 0020 add separate staging storage and revision numbers. Run migrate before starting the updated app; no existing inventory rows are deleted. Existing image paths remain readable. Replacing either image clears its review answer.
 
 ## Before deployment
 
@@ -37,3 +37,15 @@ Resolve deployment warnings appropriate to the server before reopening traffic. 
 Sign in as a regular user and as an administrator. Upload day and night images to a test record, open its Compare button, verify both IDs and images, select Yes, navigate away/back, then select No. Export both a single section and all sections and verify the saved visibility value and public image hostname. Replace an image and confirm its previous review clears. Check mobile layout and keyboard navigation. Confirm another project's user cannot access the image/review. Verify backups can be restored.
 
 For rollback, restore the previous source and collected static assets. Restore the backed-up database and uploads together if data rollback is required; avoid mixing snapshots from different times.
+
+
+## September 22 review fixes
+
+- Optional `NIGHT_SIMULATION_LINK` (also `Night Simulation Image`) imports independently of legacy Y/N/NV/NA visibility codes. Blank/missing links are supported.
+- `SECTION ID` maps to ST_ID without adding an export column. Zero-valued coordinates and levels survive import.
+- Configure `DJANGO_INVENTORY_IMAGE_ORIGINS` as comma-separated trusted HTTPS origins for externally hosted image previews. Default: `https://stpaul.bluedometech.com`. This affects browser image loading only; the application never downloads remote URLs server-side.
+- Staging renders 100 rows per page and retains Select filtered across pages. Staging edit/approval versions now use integer revisions, avoiding rapid-edit timestamp collisions.
+- Configuration tab labels use Django's escaped JSON output. Imported links reject non-HTTP(S) schemes and credentials.
+- Run `node tests/frontend_review.cjs` for frontend pagination and URL policy tests. For an optional real-workbook integration check, set `INVENTORY_REVIEW_WORKBOOK` to a local XLSX path before running the Django suite; it uses an isolated test database and does not import into production.
+
+Production readiness still requires validation on the target host: TLS/proxy configuration, SMTP delivery, backup restore, browser acceptance testing, and appropriate load tests. Local automated checks are not a certification that all production risks are eliminated.

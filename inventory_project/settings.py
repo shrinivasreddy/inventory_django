@@ -260,3 +260,21 @@ LOGGING = {
         "django": {"handlers": ["console", "file"], "level": "WARNING", "propagate": False},
     },
 }
+
+
+# Imported pictures load in the browser only; no server-side URL fetching.
+from urllib.parse import urlsplit as _split_image_origin
+from django.core.exceptions import ImproperlyConfigured as _ImageOriginConfigError
+INVENTORY_IMAGE_ORIGINS = []
+for _origin in os.environ.get("DJANGO_INVENTORY_IMAGE_ORIGINS", "https://stpaul.bluedometech.com").split(","):
+    _origin = _origin.strip().rstrip("/")
+    if not _origin:
+        continue
+    try:
+        _parts = _split_image_origin(_origin)
+        _valid = _parts.scheme == "https" and bool(_parts.hostname) and not (_parts.path or _parts.query or _parts.fragment or _parts.username or _parts.password) and not any(c.isspace() or c in ";'\\" for c in _origin)
+    except ValueError:
+        _valid = False
+    if not _valid:
+        raise _ImageOriginConfigError("DJANGO_INVENTORY_IMAGE_ORIGINS must contain HTTPS origins without paths or credentials.")
+    INVENTORY_IMAGE_ORIGINS.append(_origin)

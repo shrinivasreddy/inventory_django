@@ -10,4 +10,4 @@ import threading
 from .specs import TAB_ORDER
 
 
-section_write_locks = {key: threading.Lock() for key in TAB_ORDER}
+section_write_locks = {key: threading.RLock() for key in TAB_ORDER}
