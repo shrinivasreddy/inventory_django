@@ -1,60 +1,9 @@
-(function () {
-  "use strict";
-
-  function replaceOptions(select, placeholder, options) {
-    var previous = select.value;
-    select.innerHTML = "";
-    var empty = document.createElement("option");
-    empty.value = "";
-    empty.textContent = placeholder;
-    select.appendChild(empty);
-    options.forEach(function (option) {
-      var element = document.createElement("option");
-      element.value = String(option.value);
-      element.textContent = option.label;
-      select.appendChild(element);
-    });
-    if (Array.prototype.some.call(select.options, function (option) {
-      return option.value === previous;
-    })) {
-      select.value = previous;
-    }
-  }
-
-  document.addEventListener("DOMContentLoaded", function () {
-    var project = document.getElementById("id_project");
-    var user = document.getElementById("id_user");
-    var start = document.getElementById("id_start_frame");
-    var end = document.getElementById("id_end_frame");
-    if (!project || !user || !start || !end) return;
-
-    var endpoint = new URL("../available-options/", window.location.href);
-    project.addEventListener("change", function () {
-      replaceOptions(user, "Select a project member", []);
-      replaceOptions(start, "Select an unassigned frame", []);
-      replaceOptions(end, "Select an unassigned frame", []);
-      if (!project.value) return;
-
-      endpoint.searchParams.set("project_id", project.value);
-      fetch(endpoint.toString(), { credentials: "same-origin" })
-        .then(function (response) {
-          if (!response.ok) throw new Error("Unable to load project frame options.");
-          return response.json();
-        })
-        .then(function (data) {
-          replaceOptions(user, "Select a project member", (data.users || []).map(function (item) {
-            return { value: item.id, label: item.label };
-          }));
-          var frames = (data.frames || []).map(function (frame) {
-            return { value: frame, label: String(frame) };
-          });
-          replaceOptions(start, "Select an unassigned frame", frames);
-          replaceOptions(end, "Select an unassigned frame", frames);
-        })
-        .catch(function () {
-          replaceOptions(start, "Unable to load frames", []);
-          replaceOptions(end, "Unable to load frames", []);
-        });
-    });
-  });
-}());
+(function(){
+'use strict';
+function options(select, placeholder, values){var old=select.value;select.replaceChildren(new Option(placeholder,''));values.forEach(function(item){select.add(new Option(item.label,String(item.value)));});if(Array.from(select.options).some(function(o){return o.value===old;}))select.value=old;}
+function setup(source){if(source.id.includes('__prefix__')||source.dataset.frameBound)return;source.dataset.frameBound='1';var prefix=source.id.slice(0,-'source_file'.length),tab=document.getElementById(prefix+'tab'),user=document.getElementById(prefix+'user'),start=document.getElementById(prefix+'start_frame'),end=document.getElementById(prefix+'end_frame'),project=document.getElementById('id_project');if(!tab||!start||!end||!user)return;var version=0;
+function refresh(){var current=++version;var projectId=project?project.value:source.dataset.project;var id=document.getElementById(prefix+'id');var assignment=id?id.value:source.dataset.assignment;var url=new URL(source.dataset.endpoint,location.origin);url.search=new URLSearchParams({project_id:projectId||'',tab:tab.value,source_file:source.value,assignment_id:assignment||''});start.disabled=end.disabled=true;fetch(url,{credentials:'same-origin'}).then(function(r){if(!r.ok)throw Error();return r.json();}).then(function(data){if(current!==version)return;options(user,'Select a project member',(data.users||[]).map(function(u){return{value:u.id,label:u.label};}));options(source,'Select source file',(data.files||[]).filter(function(f){return f.value!=='';}));options(start,'Select an unassigned frame',data.frame_options||[]);options(end,'Select an unassigned frame',data.frame_options||[]);}).catch(function(){if(current===version){options(start,'Could not load frames; change file to retry',[]);options(end,'Could not load frames; change file to retry',[]);}}).finally(function(){if(current===version)start.disabled=end.disabled=false;});}
+source.addEventListener('change',refresh);tab.addEventListener('change',function(){source.value='';refresh();});if(project)project.addEventListener('change',function(){source.value='';refresh();});
+}
+document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('select[name$="source_file"]').forEach(setup);});document.addEventListener('formset:added',function(event){event.target.querySelectorAll('select[name$="source_file"]').forEach(setup);});
+})();

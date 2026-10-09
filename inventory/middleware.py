@@ -1,6 +1,44 @@
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
 from django.utils import timezone
+from django.core.cache import cache
+from django.http import HttpResponse
+from django.utils.deprecation import MiddlewareMixin
+import hashlib
+import time
+
+
+class AuthenticationRateLimitMiddleware(MiddlewareMixin):
+    """Bound authentication POST traffic in the supported single-process deployment."""
+
+    def process_view(self, request, view_func, view_args, view_kwargs):
+        match = request.resolver_match
+        if request.method != 'POST' or not match or match.url_name not in {'login', 'password_reset', 'signup'}:
+            return None
+        window = 300
+        now = int(time.time())
+        bucket = now // window
+        # Never trust a client-supplied forwarded IP header.
+        address = request.META.get('REMOTE_ADDR', '')
+        identity = request.POST.get('username') or request.POST.get('email') or ''
+        checks = [(address, 100), (address + ':' + identity.strip().casefold(), 15)]
+        for value, limit in checks:
+            digest = hashlib.sha256(value.encode('utf-8')).hexdigest()
+            key = f'auth-rate:{match.url_name}:{bucket}:{digest}'
+            if cache.add(key, 1, timeout=window + 1):
+                count = 1
+            else:
+                try:
+                    count = cache.incr(key)
+                except ValueError:
+                    cache.add(key, 1, timeout=window + 1)
+                    count = 1
+            if count > limit:
+                response = HttpResponse('Too many attempts. Please wait a few minutes and try again.', status=429, content_type='text/plain')
+                response['Retry-After'] = str(window - now % window)
+                response['Cache-Control'] = 'no-store'
+                return response
+        return None
 
 
 LAST_ACTIVITY_KEY = "_inventory_last_activity"

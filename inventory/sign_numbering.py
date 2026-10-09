@@ -23,7 +23,8 @@ def next_number(values, prefix):
 
 
 def suggest(project, data, exclude_pk=None, allocate=False):
-    records = list(TabRecord.objects.filter(project=project, tab='sign').exclude(pk=exclude_pk).values_list('data', flat=True))
+    stored = list(TabRecord.objects.filter(project=project, tab='sign').values_list('pk', 'data'))
+    records = [data for pk, data in stored]
     latitude, longitude = coordinate(data.get('LATITUDE')), coordinate(data.get('LONGITUDE'))
     matches = [r for r in records if latitude is not None and longitude is not None and coordinate(r.get('LATITUDE')) == latitude and coordinate(r.get('LONGITUDE')) == longitude and canonical(r.get('POLE_ID'))]
     pole = canonical(data.get('POLE_ID')) or (canonical(matches[0].get('POLE_ID')) if matches else '')
@@ -32,6 +33,13 @@ def suggest(project, data, exclude_pk=None, allocate=False):
     sign = canonical(data.get('SIGN'))
     if not sign and pole:
         sign = next_number([r.get('SIGN') for r in records if canonical(r.get('POLE_ID')) == pole], 'S')
-    if allocate and any(canonical(r.get('POLE_ID')) == pole and canonical(r.get('SIGN')) == sign for r in records):
-        raise ValueError(f'Pole ID {pole} and Sign ID {sign} already exist in this project. Choose a different Sign ID.')
+    if allocate and latitude is not None and longitude is not None and any(
+        pk != exclude_pk
+        and canonical(r.get('POLE_ID')) == pole
+        and canonical(r.get('SIGN')) == sign
+        and coordinate(r.get('LATITUDE')) == latitude
+        and coordinate(r.get('LONGITUDE')) == longitude
+        for pk, r in stored
+    ):
+        raise ValueError(f'Pole ID {pole} and Sign ID {sign} already exist at the same latitude and longitude in this project. Choose a different Sign ID or correct the coordinates.')
     return {'POLE_ID': pole, 'SIGN': sign}

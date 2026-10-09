@@ -21,6 +21,7 @@ import django  # noqa: E402
 django.setup()
 
 from inventory_project.wsgi import application  # noqa: E402
+from django.conf import settings  # noqa: E402
 
 
 def acquire_single_instance_lock(port):
@@ -66,7 +67,11 @@ if __name__ == "__main__":
             "process would have its own separate locks and could race with the "
             "first on writes."
         )
-        serve(application, host=host, port=port, threads=thread_count)
+        serve(
+            application, host=host, port=port, threads=thread_count,
+            max_request_body_size=settings.DATA_UPLOAD_MAX_MEMORY_SIZE,
+            max_request_header_size=32768,
+        )
     except ImportError:
         print(
             "waitress isn't installed -- install it (already in requirements.txt) "

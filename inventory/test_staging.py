@@ -29,6 +29,106 @@ class StagingTests(TestCase):
     def listing(self, key='sign'):
         return self.client.get(f'/api/{key}/staging').json()['records']
 
+    def test_generic_sheet_names_accept_one_two_or_four_inventory_types(self):
+        types = [('sign', 'SIGN_UID'), ('pavement', 'PM_UID'), ('lane', 'LANE_UID'), ('curb', 'CURB_UID')]
+        for size in (1, 2, 4):
+            with self.subTest(size=size):
+                workbook = Workbook()
+                workbook.active.title = 'Empty sheet'
+                for number, (key, field) in enumerate(types[:size], 1):
+                    sheet = workbook.create_sheet('Sheet' + str(number))
+                    sheet.append([field])
+                    sheet.append([str(size) + '-' + key])
+                stream = io.BytesIO()
+                workbook.save(stream)
+                response = self.client.post('/api/curb/staging', {'file':SimpleUploadedFile('inventory.xlsx', stream.getvalue())})
+                self.assertEqual(response.status_code, 201, response.content)
+                self.assertEqual(response.json()['by_type'], {key:1 for key, field in types[:size]})
+                self.assertEqual(response.json()['imported'], size)
+
+    def test_repeat_uploads_and_duplicate_detection_for_every_type(self):
+        for key, field in [('sign','SIGN_UID'), ('pavement','PM_UID'), ('lane','LANE_UID'), ('curb','CURB_UID')]:
+            row = {field:'same', 'STREET_NAME':'Original'}
+            self.assertEqual(self.upload(key, [row]).json()['imported'], 1)
+            repeated = self.upload(key, [row]).json()
+            self.assertEqual(repeated['imported'], 0)
+            self.assertEqual(repeated['skipped'], 1)
+            self.assertEqual(len(self.listing(key)), 1)
+            self.upload(key, [{**row, 'STREET_NAME':'Changed'}])
+            rows = self.listing(key)
+            self.assertTrue(all(r['duplicate'] for r in rows))
+            self.assertEqual(self.approve(rows, key).status_code, 400)
+            self.client.delete(f'/api/{key}/staging/{rows[1]["id"]}', json.dumps({'version':rows[1]['version']}), content_type='application/json')
+            self.assertEqual(self.approve(self.listing(key), key).status_code, 200)
+            self.upload(key, [row])
+            self.assertTrue(self.listing(key)[0]['live_duplicate'])
+
+    def test_approval_and_rejection_are_separate_for_each_inventory_type(self):
+        for key, field in [('sign','SIGN_UID'), ('pavement','PM_UID'), ('lane','LANE_UID'), ('curb','CURB_UID')]:
+            self.assertEqual(self.upload(key, [{field:key}]).status_code, 201)
+        pavement = self.listing('pavement')
+        self.assertEqual(self.approve(pavement, 'sign').status_code, 409)
+        self.assertEqual(self.approve(self.listing('sign'), 'sign').status_code, 200)
+        self.assertEqual(list(TabRecord.objects.values_list('tab', flat=True)), ['sign'])
+        self.assertEqual(set(StagedInventoryRecord.objects.values_list('tab', flat=True)), {'pavement','lane','curb'})
+        lane = self.listing('lane')[0]
+        response = self.client.post('/api/lane/staging/reject', json.dumps({'rows':[{'id':lane['id'], 'version':lane['version']}]}), content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(set(StagedInventoryRecord.objects.values_list('tab', flat=True)), {'pavement','curb'})
+        self.assertEqual(self.approve(pavement, 'pavement').status_code, 200)
+        self.assertEqual(set(TabRecord.objects.values_list('tab', flat=True)), {'sign','pavement'})
+        self.assertEqual(StagedInventoryRecord.objects.get().tab, 'curb')
+
+    def test_multi_inventory_workbook_routes_all_sheets_atomically(self):
+        workbook = Workbook()
+        workbook.remove(workbook.active)
+        for title, header in [('SIGN_&_RETRO', 'SIGN_UID'), ('PAVEMENT', 'PM_UID'), ('LANE', 'LANE_UID'), ('CURB', 'CURB_UID')]:
+            sheet = workbook.create_sheet(title)
+            sheet.append([header])
+            sheet.append([title + '-1'])
+        workbook['CURB'].cell(1, 2, 'CURB_MARKING_TYPE')
+        workbook['CURB'].cell(2, 2, 'Painted')
+        workbook['PAVEMENT'].cell(2, 2, 'CAR COVERED')
+        def upload():
+            stream = io.BytesIO()
+            workbook.save(stream)
+            return self.client.post('/api/lane/staging', {'file': SimpleUploadedFile('combined.xlsx', stream.getvalue())})
+        response = upload()
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()['by_type'], {'sign':1, 'pavement':1, 'lane':1, 'curb':1})
+        self.assertEqual(TabRecord.objects.count(), 0)
+        self.assertEqual(StagedInventoryRecord.objects.get(tab='curb').data['CURB_MARKING'], 'Painted')
+        self.assertEqual(StagedInventoryRecord.objects.get(tab='pavement').data['COMMENT'], 'CAR COVERED')
+        self.assertTrue(all(row.owner == self.user and row.project == self.project for row in StagedInventoryRecord.objects.all()))
+        workbook['CURB'].cell(1, 3, 'TYPO_COLUMN')
+        workbook['CURB'].cell(2, 3, 'invalid')
+        response = upload()
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()['imported'], 0)
+        self.assertEqual(StagedInventoryRecord.objects.count(), 4)
+
+    def test_extra_columns_are_ignored_for_all_inventory_types(self):
+        for key, field in [('sign', 'SIGN_UID'), ('pavement', 'PM_UID'), ('lane', 'LANE_UID'), ('curb', 'CURB_UID')]:
+            response = self.upload(key, [{field: 'extra-test', 'SMALL_IMAGE_LINK': 'small.jpg', 'NEW_COLUMN': 'extra'}])
+            self.assertEqual(response.status_code, 201, response.content)
+            row = StagedInventoryRecord.objects.get(tab=key)
+            self.assertEqual(row.data[field], 'extra-test')
+            self.assertNotIn('SMALL_IMAGE_LINK', row.data)
+            self.assertNotIn('NEW_COLUMN', row.data)
+
+    def test_duplicate_extra_headers_and_extra_only_rows_are_ignored(self):
+        content = b'SIGN_UID,SMALL_IMAGE_LINK,SMALL_IMAGE_LINK\nA,one,two\n,extra,only\n'
+        response = self.client.post('/api/sign/staging', {'file': SimpleUploadedFile('inventory.csv', content, 'text/csv')})
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()['imported'], 1)
+        self.assertEqual(StagedInventoryRecord.objects.get().data['SIGN_UID'], 'A')
+
+    def test_duplicate_known_headers_still_fail_without_importing(self):
+        content = b'SIGN_UID,SIGN UID,SMALL_IMAGE_LINK\nA,B,extra\n'
+        response = self.client.post('/api/sign/staging', {'file': SimpleUploadedFile('inventory.csv', content, 'text/csv')})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(StagedInventoryRecord.objects.count(), 0)
+
     def approve(self, rows, key='sign'):
         return self.client.post(f'/api/{key}/staging/approve', json.dumps({'rows':[{'id':r['id'], 'version':r['version']} for r in rows]}), content_type='application/json')
 
@@ -217,7 +317,7 @@ class StagingTests(TestCase):
             self.skipTest('Set INVENTORY_REVIEW_WORKBOOK for the real-sheet integration check.')
         from openpyxl import load_workbook
         workbook = load_workbook(filename, read_only=True, data_only=True)
-        expected_rows = sum(any(value is not None for value in row) for row in list(workbook.active.values)[1:])
+        expected_rows = sum(any(value not in (None, '') for value in row) for sheet in workbook for row in list(sheet.values)[1:])
         workbook.close()
         with open(filename, 'rb') as stream:
             response = self.client.post('/api/sign/staging', {'file':stream})

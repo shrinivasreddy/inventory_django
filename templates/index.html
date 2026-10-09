@@ -118,6 +118,14 @@
     border: 1px solid #334155; border-radius: 7px; background: #fff;
   }
   .mutcd-reference-card__caption { margin: 8px 0 0; color: #cbd5e1; font-size: 12px; line-height: 1.4; }
+  .mutcd-reference-unavailable { min-height:170px; padding:24px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; text-align:center; background:#f8fafc; border:2px dashed #b9c9de; border-radius:10px; color:#526580; }
+  .mutcd-reference-unavailable strong { font-size:17px; color:#334155; }
+  .mutcd-reference-unavailable span { font-size:14px; overflow-wrap:anywhere; }
+  .mutcd-reference-unavailable.hidden { display:none; }
+  #form-panel #mutcd-reference-hint.hidden { display:none; }
+  .visibility-choices label:has(input:disabled) { opacity:.5; cursor:not-allowed; }
+  .visibility-choices input:disabled { cursor:not-allowed; }
+  #form-visibility-help { display:block; margin-top:6px; color:#64748b; font-size:12px; }
   .record-image-link { color: #2563eb; font-weight: 700; white-space: nowrap; }
   .hidden { display: none !important; }
 
@@ -133,6 +141,9 @@
   #clear-btn { background: #334155; color: #e5e7eb; }
   #export-btn { background: #f59e0b; color: #000; }
   #add-btn:hover { background: #86efac; }
+  .record-delete-btn { min-width:36px; min-height:36px; margin-left:6px; padding:6px 9px; border:1px solid #fecaca; border-radius:7px; background:#fff1f2; color:#b91c1c; font-size:18px; cursor:pointer; }
+  .record-delete-btn:hover:not(:disabled) { background:#fee2e2; }
+  .record-delete-btn:focus-visible { outline:3px solid #f87171; outline-offset:2px; }
   #update-btn:hover { background: #2563eb; }
   #delete-btn:hover { background: #dc2626; }
   #clear-btn:hover, #logout-btn:hover { background: #475569; }
@@ -255,7 +266,7 @@
 #simulation-dialog label:has(input:checked) { background:#eaf8f1; border-color:#22a26b; }
 #simulation-dialog label:has(input[value="No"]:checked) { background:#fff2ec; border-color:#dd7940; }
 #simulation-dialog label:focus-within { outline:3px solid #9dc5ff; outline-offset:2px; }
-#simulation-dialog fieldset:disabled label { opacity:.55; cursor:not-allowed; box-shadow:none; }
+#simulation-dialog fieldset:disabled label, #simulation-dialog label:has(input:disabled) { opacity:.55; cursor:not-allowed; box-shadow:none; }
 #simulation-dialog input[type=radio] { width:18px; height:18px; margin:0; accent-color:#167951; flex-shrink:0; }
 #simulation-dialog label strong { display:block; font-size:14px; }
 #simulation-dialog label small { display:block; color:#6c8098; font-size:12px; margin-top:4px; }
@@ -284,10 +295,10 @@
     </div>
   </div>
   <div id="banner-actions">
-    <div class="account-context" title="Signed in account">
-      <span class="account-context__avatar" aria-hidden="true">{{ request.user.username|slice:":1"|upper }}</span>
+    <a class="account-context" href="{% url 'profile' %}" title="Edit profile and password" style="text-decoration:none">
+      <span class="account-context__avatar" aria-hidden="true">{% if request.user.inventory_profile.photo %}<img src="{% url 'profile_photo' %}" alt="" style="width:34px;height:34px;border-radius:8px;object-fit:cover">{% else %}{{ request.user.username|slice:":1"|upper }}{% endif %}</span>
       <span><small>Signed in as</small><strong id="current-user">{{ request.user.username }}</strong></span>
-    </div>
+    </a>
     <div class="project-switcher" id="project-switcher">
       <span class="project-switcher__icon" aria-hidden="true">
         <svg viewBox="0 0 24 24"><path d="M4 4h7v7H4V4zm9 0h7v7h-7V4zM4 13h7v7H4v-7zm9 0h7v7h-7v-7z"/></svg>
@@ -364,7 +375,7 @@
     <section id="night-upload" class="image-upload-box hidden" style="margin:12px 0" aria-labelledby="night-image-label">
       <label id="night-image-label" for="night-file">Night simulation (optional)</label>
       <a id="night-link" class="image-current-link hidden" target="_blank" rel="noopener noreferrer">View night simulation</a>
-      <img id="night-preview" class="image-preview hidden" alt="Night simulation preview">
+      <img id="night-preview" class="image-preview hidden" alt="Night simulation preview" role="button" tabindex="0" aria-label="Open enlarged night simulation viewer">
       <input id="night-file" class="image-upload-input" type="file" accept="image/jpeg,image/png,image/webp">
       <div class="image-browse-row">
         <label class="image-browse-button" for="night-file">Browse image</label>
@@ -388,7 +399,7 @@
       <button id="compare-simulations-btn" class="hidden" type="button">Compare Day and Night Simulation</button>
       <button id="export-btn" title="Export every record in this inventory type, regardless of page or search">Export All Records to Excel</button>
     </div>
-    <div id="status"></div>
+    <div id="status" role="status" aria-live="polite"></div>
   </div>
 
   <div id="form-resizer" role="separator" aria-label="Resize inventory form panel" aria-orientation="vertical" aria-valuemin="360" aria-valuemax="760" aria-valuenow="420" tabindex="0">
@@ -398,9 +409,12 @@
 
   <div id="table-panel">
     <div class="records-sticky-controls"><button id="records-collapse-toggle" type="button" aria-expanded="true" aria-controls="table-panel" title="Collapse records panel">›<span class="sr-only">Collapse records panel</span></button></div>
-    <div id="inventory-upload-controls"><label class="inventory-upload-button" for="inventory-sheet-file">Upload Inventory Sheet</label><input id="inventory-sheet-file" type="file" accept=".xlsx,.csv" hidden><span id="inventory-upload-status" role="status">CSV / XLSX · Review in Staging before approval</span></div>
+    <div id="inventory-upload-controls"><label id="inventory-sheet-upload-label" class="inventory-upload-button" for="inventory-sheet-file">Upload Inventory Sheet</label><input id="inventory-sheet-file" type="file" accept=".xlsx,.csv" hidden><span id="inventory-upload-status" role="status">CSV / XLSX · Review in Staging before approval</span></div>
+    <div id="ai-sheet-upload-controls" hidden>{% if request.user.is_staff %}<a class="inventory-upload-button" href="{% url 'admin:inventory_tabrecord_import_ai_processed' %}" style="display:inline-flex;text-decoration:none;color:white">Upload AI Processed Sheet</a><span class="help">CSV / XLSX · Import AI processed sign records</span>{% else %}<span class="inventory-upload-button" aria-disabled="true" style="opacity:.6">Upload AI Processed Sheet</span><span class="help">An administrator can upload AI processed sheets.</span>{% endif %}</div>
     <section id="staging-panel" hidden aria-label="Inventory staging">
-      <div class="staging-toolbar staging-filters"><label>Status <select id="staging-filter"><option value="all">All rows</option><option value="OK">OK</option><option value="duplicate">Duplicates</option><option value="unclear">Condition unclear (?)</option></select></label><label>Sort <select id="staging-sort"><option value="source">Source order</option><option value="status">Status</option><option value="uid">SIGN UID</option></select></label><button id="staging-select" type="button">Select filtered</button><button id="staging-unselect" type="button">Clear selection</button><button id="staging-approve-selected" type="button">Approve Selected</button><button id="staging-reject-filtered" type="button">Reject filtered</button></div>
+      <div class="staging-toolbar"><label>Review inventory type <select id="staging-type"><option value="sign">Sign</option><option value="pavement">Pavement</option><option value="lane">Lane</option><option value="curb">Curb</option></select></label></div>
+      <p id="staging-scope-help"></p>
+      <div class="staging-toolbar staging-filters"><label>Status <select id="staging-filter"><option value="all">All rows</option><option value="OK">OK</option><option value="duplicate">Duplicates</option><option value="unclear">Condition unclear (?)</option></select></label><label>Sort <select id="staging-sort"><option value="source">Source order</option><option value="status">Status</option><option value="uid">Inventory UID</option></select></label><button id="staging-select" type="button">Select filtered</button><button id="staging-unselect" type="button">Clear selection</button><button id="staging-approve-selected" type="button">Approve Selected</button><button id="staging-reject-filtered" type="button">Reject filtered</button></div>
       <p id="staging-status" role="status"></p><div id="staging-duplicates"></div><div class="staging-toolbar staging-pagination"><button id="staging-prev" type="button">Previous page</button><span id="staging-page-position" aria-live="polite"></span><button id="staging-next" type="button">Next page</button></div>
       <div id="staging-empty" hidden><strong>No records to review</strong><p>Upload an inventory sheet to start reviewing rows here.</p></div><div class="staging-scroll"><table><thead id="staging-head"></thead><tbody id="staging-body"></tbody></table></div>
     </section>
@@ -408,6 +422,15 @@
     <div id="search-row">
       <div class="records-search-field"><label for="search-box">Search records</label><input id="search-box" type="text" placeholder="Search by ID, street name, or any record value…" autocomplete="off"></div>
       <span id="record-count"></span>
+    </div>
+    <div id="bulk-record-actions" role="group" aria-label="Bulk record actions" hidden>
+      <div class="bulk-selection-summary"><span id="bulk-selection-count" aria-live="polite">0 selected</span><span class="bulk-selection-hint">Select records using the checkboxes</span></div>
+      <div class="bulk-selection-buttons">
+      <button id="bulk-select-page" type="button">Select page</button>
+      <button id="bulk-clear-selection" type="button">Clear selection</button>
+      <button id="bulk-delete-records" type="button" disabled><img src="{% static 'inventory/img/trash.svg' %}" width="18" height="18" alt="" aria-hidden="true"><span id="bulk-delete-label">Delete selected</span></button>
+      </div>
+      <span id="bulk-record-status" role="status" aria-live="polite"></span>
     </div>
     <p class="records-resize-help">Drag the bottom-right corner of the records table downward to show more rows.</p>
     <div id="table-scroll">
@@ -490,9 +513,9 @@
   </div>
   <fieldset id="simulation-answer"><legend>Is the Night Simulation clearly visible?</legend>
     <label><input type="radio" name="simulation-answer" value="Yes"><span><strong>Yes, clearly visible</strong><small>The night simulation looks correct</small></span></label>
-    <label><input type="radio" name="simulation-answer" value="No"><span><strong>No, needs attention</strong><small>The night simulation is not clear</small></span></label>
+    <label><input type="radio" name="simulation-answer" value="No"><span><strong>No, needs attention</strong><small>The simulation is unclear, missing, or could not load</small></span></label>
   </fieldset>
-  <p id="simulation-review-help">Both images must load before you can review. Your choice saves automatically.</p>
+  <p id="simulation-review-help">Choose Yes or No. Your choice saves automatically.</p>
   <p id="simulation-status" role="status" aria-live="polite"></p>
   <div class="simulation-actions"><button type="button" id="simulation-prev">← Previous</button><button type="button" id="simulation-close">Done</button><button type="button" id="simulation-next">Next record →</button></div>
 </dialog>
@@ -521,6 +544,12 @@
 .operation-spinner { width:48px; height:48px; margin:0 auto 20px; border:4px solid #e1ebfa; border-top-color:#0755d9; border-right-color:#f47700; border-radius:50%; animation:operation-spin .85s linear infinite; }
 #operation-loading h2 { margin:0 0 10px; font-size:21px; }
 #operation-loading p { margin:0; color:#526580; line-height:1.6; }
+.preview-frame { position:relative; min-height:180px; margin-bottom:10px; overflow:hidden; border:1px solid #334155; border-radius:10px; background:#0b1425; }
+.preview-frame[hidden], .preview-loading[hidden], .preview-loading .operation-spinner[hidden] { display:none; }
+.preview-frame .image-preview { margin:0; border:0; border-radius:0; }
+.preview-loading { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:24px; background:linear-gradient(135deg,rgba(17,36,65,.96),rgba(5,13,28,.96)); color:#e7efff; text-align:center; font-size:14px; font-weight:600; line-height:1.6; }
+.preview-loading .operation-spinner { flex-shrink:0; width:36px; height:36px; margin:0; border-width:3px; }
+#simulation-dialog .preview-frame { margin:0; border:0; border-radius:0; }
 @keyframes operation-spin { to { transform:rotate(360deg); } }
 @media (prefers-reduced-motion:reduce) { .operation-spinner { animation-duration:3s; } }
 </style>
@@ -714,7 +743,76 @@ var pendingNightFile = null;
 var nightObjectUrl = null;
 var nightSavedUrl = '';
 var nightInput = document.getElementById('night-file');
+// Each preview owns its request so late completions cannot replace a newer record.
+function loadPreviewImage(img, url, label, onReady) {
+  if (!img.previewFrame) {
+    var frame = document.createElement('div');
+    frame.className = 'preview-frame';
+    img.parentNode.insertBefore(frame, img);
+    frame.appendChild(img);
+    var overlay = document.createElement('div');
+    overlay.className = 'preview-loading';
+    overlay.setAttribute('role', 'status');
+    overlay.setAttribute('aria-live', 'polite');
+    var spinner = document.createElement('div');
+    spinner.className = 'operation-spinner';
+    spinner.setAttribute('aria-hidden', 'true');
+    var message = document.createElement('span');
+    overlay.appendChild(spinner);
+    overlay.appendChild(message);
+    frame.appendChild(overlay);
+    img.previewFrame = frame;
+    img.previewOverlay = overlay;
+    img.previewMessage = message;
+    img.previewSpinner = spinner;
+  }
+  var request = {};
+  img.previewRequest = request;
+  img.previewFrame.hidden = !url;
+  img.previewFrame.setAttribute('aria-busy', url ? 'true' : 'false');
+  img.previewOverlay.hidden = !url;
+  img.previewSpinner.hidden = false;
+  img.previewMessage.textContent = 'Loading ' + label + '…';
+  img.style.visibility = 'hidden';
+  img.classList.remove('hidden');
+  img.hidden = false;
+  img.removeAttribute('src');
+  if (!url) return;
+  var pending = new Image();
+  function finish(success) {
+    if (img.previewRequest !== request) return;
+    img.previewFrame.setAttribute('aria-busy', 'false');
+    if (success) {
+      img.src = url;
+      img.style.visibility = '';
+      img.previewOverlay.hidden = true;
+    } else {
+      img.previewSpinner.hidden = true;
+      img.previewMessage.textContent = 'Could not load ' + label + '. Try opening the image link or select this record again.';
+    }
+    if (onReady) onReady(success);
+  }
+  pending.onload = function () {
+    if (pending.decode) pending.decode().then(function () { finish(true); }, function () { finish(false); });
+    else finish(true);
+  };
+  pending.onerror = function () { finish(false); };
+  pending.src = url;
+}
+
+var formSimulationLoaded = {day:false, night:false};
+function updateFormVisibilityControls() {
+  var disabled = !formSimulationLoaded.day || !formSimulationLoaded.night;
+  document.querySelectorAll('input[name="form-night-visibility"]').forEach(function (radio) {
+    radio.disabled = disabled;
+    radio.title = disabled ? 'Both day and night images must load before choosing visibility.' : '';
+  });
+  var help = document.getElementById('form-visibility-help');
+  if (help) help.textContent = disabled ? 'Both day and night images must load before choosing visibility.' : '';
+}
 function showNightImage(url) {
+  formSimulationLoaded.night = false;
+  updateFormVisibilityControls();
   document.getElementById('night-file-name').textContent = pendingNightFile ? pendingNightFile.name : (url ? 'No replacement selected' : 'No image selected');
   if (nightObjectUrl) URL.revokeObjectURL(nightObjectUrl);
   nightObjectUrl = pendingNightFile ? URL.createObjectURL(pendingNightFile) : null;
@@ -722,8 +820,10 @@ function showNightImage(url) {
   var src = nightObjectUrl || accessibleImageUrl(nightSavedUrl);
   var preview = document.getElementById('night-preview');
   var link = document.getElementById('night-link');
-  preview.src = src;
-  preview.classList.toggle('hidden', !src);
+  loadPreviewImage(preview, src, 'night image', function (success) {
+    formSimulationLoaded.night = success;
+    updateFormVisibilityControls();
+  });
   link.href = src;
   link.classList.toggle('hidden', !src);
 }
@@ -809,6 +909,7 @@ var lightboxDragStartY = 0;
 var lightboxOriginX = 0;
 var lightboxOriginY = 0;
 var lightboxPreviousFocus = null;
+var lightboxCloseTimer;
 
 function renderLightboxTransform() {
   imageLightboxImage.style.transform = 'translate3d(' + lightboxX + 'px,' + lightboxY + 'px,0) scale(' + lightboxScale + ')';
@@ -837,8 +938,13 @@ function setLightboxScale(nextScale, anchorX, anchorY) {
 
 function openImageLightbox(preview) {
   preview = preview && preview.tagName === 'IMG' ? preview : imagePreview;
-  if (!preview || !preview.src || preview.classList.contains('hidden')) return;
+  if (!preview || !preview.getAttribute('src') || preview.style.visibility === 'hidden' || preview.classList.contains('hidden')) return;
+  clearTimeout(lightboxCloseTimer);
+  imageLightbox.classList.remove('is-closing');
   lightboxPreviousFocus = document.activeElement;
+  // Keep the viewer inside the active modal's top layer so it remains clickable.
+  var comparison = document.getElementById('simulation-dialog');
+  (comparison.open ? comparison : document.body).appendChild(imageLightbox);
   imageLightboxImage.src = preview.src;
   imageLightbox.classList.remove('hidden');
   document.body.classList.add('has-image-lightbox');
@@ -849,7 +955,8 @@ function openImageLightbox(preview) {
 function closeImageLightbox() {
   if (imageLightbox.classList.contains('hidden')) return;
   imageLightbox.classList.add('is-closing');
-  window.setTimeout(function () {
+  clearTimeout(lightboxCloseTimer);
+  lightboxCloseTimer = window.setTimeout(function () {
     imageLightbox.classList.add('hidden');
     imageLightbox.classList.remove('is-closing');
     imageLightboxImage.removeAttribute('src');
@@ -858,9 +965,16 @@ function closeImageLightbox() {
   }, 160);
 }
 
-imagePreview.addEventListener('click', openImageLightbox);
-imagePreview.addEventListener('keydown', function (event) {
-  if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openImageLightbox(); }
+[imagePreview, document.getElementById('night-preview'), document.getElementById('simulation-day'), document.getElementById('simulation-night')].forEach(function (preview) {
+  preview.setAttribute('role', 'button');
+  preview.setAttribute('tabindex', '0');
+  preview.setAttribute('aria-label', 'Enlarge ' + preview.alt);
+  preview.title = 'Click to enlarge';
+  preview.style.cursor = 'zoom-in';
+  preview.addEventListener('click', function () { openImageLightbox(preview); });
+  preview.addEventListener('keydown', function (event) {
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openImageLightbox(preview); }
+  });
 });
 imageLightboxClose.addEventListener('click', closeImageLightbox);
 imageLightbox.querySelector('[data-lightbox-close]').addEventListener('click', closeImageLightbox);
@@ -898,7 +1012,14 @@ imageLightboxStage.addEventListener('pointercancel', finishLightboxDrag);
 imageLightboxStage.addEventListener('dblclick', resetLightboxView);
 document.addEventListener('keydown', function (event) {
   if (imageLightbox.classList.contains('hidden')) return;
-  if (event.key === 'Escape') closeImageLightbox();
+  if (event.key === 'Tab') {
+    var controls = Array.from(imageLightbox.querySelectorAll('button, input')).filter(function (control) { return !control.disabled; });
+    var first = controls[0], last = controls[controls.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !imageLightbox.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+    else if (!event.shiftKey && (document.activeElement === last || !imageLightbox.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+    return;
+  }
+  if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeImageLightbox(); }
   else if (event.key === '+' || event.key === '=') setLightboxScale(lightboxScale + .25);
   else if (event.key === '-') setLightboxScale(lightboxScale - .25);
   else if (event.key === '0') resetLightboxView();
@@ -996,6 +1117,8 @@ function buildTabBar() {
 }
 
 function buildRecordModeBar() {
+  document.getElementById('inventory-upload-controls').style.display = recordViewMode === 'ai' ? 'none' : '';
+  document.getElementById('ai-sheet-upload-controls').hidden = recordViewMode !== 'ai';
   var bar = document.getElementById('record-modebar');
   bar.innerHTML = '';
   [
@@ -1007,7 +1130,7 @@ function buildRecordModeBar() {
     button.setAttribute('aria-pressed', String(recordViewMode === mode.key));
     if (recordViewMode === mode.key) button.classList.add('active');
     button.addEventListener('click', function () {
-      if (recordViewMode === mode.key) return;
+      if (bulkRecordBusy || recordViewMode === mode.key) return;
       if (stagingEdit) { if (!confirm("Leave the staging editor and discard unsaved changes?")) return; clearForm(false); }
       recordViewMode = mode.key;
       currentRecordPage = 1;
@@ -1020,12 +1143,15 @@ function buildRecordModeBar() {
   });
 }
 
-function switchTab(key) {
+function switchTab(key, mode) {
+  if (stagingBusy || addRecordSaving || bulkRecordBusy) return;
+  suggestedSignIds = {}; ++signSuggestionVersion; clearTimeout(signSuggestionTimer);
   stagingEdit = null; document.body.classList.remove("editing-staging"); showStaging(false);
   saveCurrentDraft();
   pendingImageFile = null;
   currentTabKey = key;
-  recordViewMode = 'inventory';
+  recordViewMode = mode === 'staging' ? 'staging' : 'inventory';
+  stagingRows = []; stagingSelection = new Set(); stagingPage = 1;
   currentRecordPage = 1;
   editingId = null;
   insertAfterId = null;
@@ -1045,6 +1171,7 @@ function loadSpecAndRecords() {
     buildForm();
     buildTableHead();
     loadRecords();
+    if (recordViewMode === 'staging') loadStaging();
   });
 }
 
@@ -1073,13 +1200,14 @@ function buildForm() {
       var choices = el('div', {class:'visibility-choices', role:'radiogroup', 'aria-label':'Night Simulation Visibility'});
       [['Yes', 'Clearly Visible'], ['No', 'Not Clearly Visible']].forEach(function (choice) {
         var label = el('label');
-        var radio = el('input', {type:'radio', name:'form-night-visibility', value:choice[0]});
+        var radio = el('input', {type:'radio', name:'form-night-visibility', value:choice[0], disabled:true, 'aria-describedby':'form-visibility-help'});
         radio.addEventListener('change', function () { valueInput.value = radio.value; saveCurrentDraft(); });
         label.appendChild(radio);
         label.appendChild(el('span', {text:choice[1]}));
         choices.appendChild(label);
       });
       wrap.appendChild(choices);
+      wrap.appendChild(el('small', {id:'form-visibility-help', text:'Both day and night images must load before choosing visibility.'}));
     } else if (spec.auto_fields.includes(col) && !stagingEdit) {
       var display = el('div', { class: 'auto-field', id: 'auto_' + col, text: '' });
       wrap.appendChild(display);
@@ -1137,8 +1265,10 @@ function buildForm() {
       datePickerEls[col] = nativePicker;
     } else if (spec.dropdown_fields.includes(col)) {
       var row = el('div', { class: 'field-row' });
-      var input = el('input', { type: 'text', id: 'field_' + col, list: 'list_' + col,
-        autocomplete: 'off', placeholder: 'Type or pick...' });
+      var manualIdentity = ['ST_ID','STREET_NAME','POLE_ID','SIGN'].includes(col);
+      var input = el('input', { type: 'text', id: 'field_' + col,
+        autocomplete: 'off', placeholder: manualIdentity ? 'Enter ' + col.replace(/_/g, ' ').toLowerCase() : 'Type or pick...' });
+      if (!manualIdentity) input.setAttribute('list', 'list_' + col);
       var datalist = el('datalist', { id: 'list_' + col });
       (spec.options[col] || []).slice().sort(function (a, b) {
         return String(a).localeCompare(String(b), undefined, { sensitivity: 'base' });
@@ -1147,7 +1277,7 @@ function buildForm() {
       });
       row.appendChild(input);
       row.appendChild(datalist);
-      if (spec.can_manage_configuration) {
+      if (spec.can_manage_configuration && !manualIdentity) {
         var addBtn = el('button', { type: 'button', class: 'add-opt-btn', text: '+' });
         addBtn.addEventListener('click', function () { addDropdownOption(col); });
         row.appendChild(addBtn);
@@ -1173,10 +1303,12 @@ function buildForm() {
         }
       }
       if (col.endsWith('LATITUDE') || col.endsWith('LONGITUDE')) {
+        textInput.addEventListener('input', function () { onFieldChanged(col); });
         textInput.setAttribute('inputmode', 'decimal');
         textInput.setAttribute('title', 'Maximum 7 digits after the decimal point');
         textInput.addEventListener('blur', function () {
           textInput.value = normalizeCoordinate(textInput.value);
+          onFieldChanged(col);
         });
       }
     }
@@ -1206,7 +1338,11 @@ function buildForm() {
         if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openImageLightbox(referencePreview); }
       });
       referenceCard.appendChild(referencePreview);
-      referenceCard.appendChild(el('span', {class:'mutcd-reference-card__hint', text:'Click image to enlarge'}));
+      var unavailable = el('div', {id:'mutcd-reference-unavailable', class:'mutcd-reference-unavailable hidden'});
+      unavailable.appendChild(el('strong', {id:'mutcd-reference-message', text:'Image not available'}));
+      unavailable.appendChild(el('span', {id:'mutcd-reference-code'}));
+      referenceCard.appendChild(unavailable);
+      referenceCard.appendChild(el('span', {id:'mutcd-reference-hint', class:'mutcd-reference-card__hint', text:'Click image to enlarge'}));
       referenceCard.appendChild(el('p', {
         id: 'mutcd-reference-caption', class: 'mutcd-reference-card__caption'
       }));
@@ -1318,7 +1454,10 @@ function requestSignIds(changedField) {
   }, 350);
 }
 function onFieldChanged(changedField) {
-  if (stagingEdit) return;
+  if (stagingEdit) {
+    if (changedField === 'MUTCD' || changedField === 'WORD_DESCRIPTION') applyMutcdReferencePreview(getVal('MUTCD'), getVal('WORD_DESCRIPTION'));
+    return;
+  }
   requestSignIds(changedField);
   if (spec.mutcd_map && (changedField === 'MUTCD' || changedField === 'WORD_DESCRIPTION')) {
     syncMutcdLink(changedField);
@@ -1356,9 +1495,20 @@ function applyMutcdReferencePreview(mutcdCode, description) {
   var card = document.getElementById('mutcd-reference-card');
   var referenceImage = document.getElementById('mutcd-reference-image');
   var caption = document.getElementById('mutcd-reference-caption');
+  var unavailable = document.getElementById('mutcd-reference-unavailable');
+  var message = document.getElementById('mutcd-reference-message');
+  var hint = document.getElementById('mutcd-reference-hint');
   var references = (spec.mutcd_reference && spec.mutcd_reference[mutcdCode]) || [];
   if (!card) return;
-  if (!references.length) {
+  var request = {};
+  referenceImage.referenceRequest = request;
+  referenceImage.removeAttribute('src');
+  referenceImage.classList.add('hidden');
+  hint.classList.add('hidden');
+  unavailable.classList.remove('hidden');
+  message.textContent = 'Image not available';
+  document.getElementById('mutcd-reference-code').textContent = 'MUTCD code: ' + mutcdCode;
+  if (!mutcdCode) {
     card.classList.add('hidden');
     if (referenceImage) {
       referenceImage.removeAttribute('src');
@@ -1369,15 +1519,27 @@ function applyMutcdReferencePreview(mutcdCode, description) {
   }
   var selected = references.find(function (reference) {
     return String(reference.description).toLowerCase() === String(description || '').toLowerCase();
-  }) || references[0];
-  if (selected.description && getVal('WORD_DESCRIPTION') !== selected.description) {
+  }) || references[0] || {description:description || ''};
+  if (!stagingEdit && selected.description && getVal('WORD_DESCRIPTION') !== selected.description) {
     setVal('WORD_DESCRIPTION', selected.description);
   }
   card.classList.remove('hidden');
   if (caption) caption.textContent = selected.description + ' (' + mutcdCode + ')';
   if (selected.image_url) {
-    referenceImage.src = selected.image_url;
-    referenceImage.classList.remove('hidden');
+    message.textContent = 'Loading reference image…';
+    var pending = new Image();
+    pending.onload = function () {
+      if (referenceImage.referenceRequest !== request) return;
+      referenceImage.src = selected.image_url;
+      referenceImage.classList.remove('hidden');
+      unavailable.classList.add('hidden');
+      hint.classList.remove('hidden');
+    };
+    pending.onerror = function () {
+      if (referenceImage.referenceRequest !== request) return;
+      message.textContent = 'Image not available';
+    };
+    pending.src = selected.image_url;
     // Keep the inventory-photo upload state independent from this reference.
     imageFileName.textContent = pendingImageFile ? pendingImageFile.name : (editingId === null ? 'No image selected' : 'No replacement selected');
     imageFileName.textContent = 'Project MUTCD reference · ' + (spec.project_jurisdiction || 'configured jurisdiction');
@@ -1542,19 +1704,18 @@ function collectRow() {
 function setStatus(msg) { document.getElementById('status').textContent = msg; }
 
 function showImagePreview(url, isObjectUrl) {
+  formSimulationLoaded.day = false;
+  updateFormVisibilityControls();
   if (imagePreviewObjectUrl) {
     URL.revokeObjectURL(imagePreviewObjectUrl);
     imagePreviewObjectUrl = null;
   }
   if (!imagePreview) return;
-  if (!url) {
-    imagePreview.removeAttribute('src');
-    imagePreview.classList.add('hidden');
-    return;
-  }
   if (isObjectUrl) imagePreviewObjectUrl = url;
-  imagePreview.src = url;
-  imagePreview.classList.remove('hidden');
+  loadPreviewImage(imagePreview, url, 'day image', function (success) {
+    formSimulationLoaded.day = success;
+    updateFormVisibilityControls();
+  });
 }
 
 function accessibleImageUrl(storedUrl) {
@@ -1597,19 +1758,25 @@ function replaceLocalRecord(record) {
   renderTable();
 }
 
+var addRecordSaving = false;
 document.getElementById('add-btn').addEventListener('click', function () {
+  if (addRecordSaving) return;
   if (editingId !== null) {
     setStatus('Record ' + editingId + ' is open for editing. Use Update to save changes.');
     return;
   }
   var requestedInsertAfterId = insertAfterId;
-  apiRequest('/api/' + currentTabKey + '/records', {
+  addRecordSaving = true;
+  document.getElementById('add-btn').disabled = true;
+  document.getElementById('add-btn').textContent = 'Saving…';
+  setStatus('Saving record…');
+  Promise.resolve().then(function () { return apiRequest('/api/' + currentTabKey + '/records', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       row: collectRow(), insert_after_id: insertAfterId
     })
-  }).then(function (res) {
-      if (!res.ok) { setStatus(res.data.error); return; }
+  }); }).then(function (res) {
+      if (!res.ok) { throw new Error(res.data.error || 'Could not save the record. Please retry.'); }
       nextIdPreview = res.data.next_id;
       var savedRecord = res.data.record;
       return uploadRecordImage(savedRecord).then(uploadNightImage).then(saveFormVisibility).then(function (finalRecord) {
@@ -1618,18 +1785,19 @@ document.getElementById('add-btn').addEventListener('click', function () {
         clearForm(false);
         if (requestedInsertAfterId !== null && recordViewMode === 'inventory') loadRecords();
       }).catch(function (err) {
-        // Creating the data row and storing its required image is one logical
-        // operation. Compensate for a failed image upload by removing the new
-        // row, so users never receive a partially saved record.
-        return apiRequest('/api/' + currentTabKey + '/records/' + savedRecord.ID, {
-          method: 'DELETE'
-        }).then(function () {
-          allRecords = allRecords.filter(function (r) { return r.ID !== savedRecord.ID; });
-          renderTable();
-          setStatus('Record was not saved because the image failed: ' + err.message);
-        });
+        // The data is already committed. Keep it and retain the selected files
+        // so an attachment/review failure can be retried without another insert.
+        editingId = savedRecord.ID;
+        insertAfterId = null;
+        replaceLocalRecord(savedRecord);
+        setRecordActionPermissions(savedRecord._CAN_EDIT === true, true);
+        updateInsertMode();
+        setStatus('Record ' + savedRecord.ID + ' was saved, but an image or visibility update failed: ' + err.message + '. Your entries are retained. Use Update to retry.');
       });
-    }).catch(function (err) { setStatus(err.message); });
+    }).catch(function (err) { setStatus('Could not complete saving: ' + (err.message || 'Unexpected error. Please retry.')); }).finally(function () {
+      addRecordSaving = false;
+      updateInsertMode();
+    });
 });
 
 document.getElementById('update-btn').addEventListener('click', function () {
@@ -1647,8 +1815,7 @@ document.getElementById('update-btn').addEventListener('click', function () {
         clearForm(false);
       }).catch(function (err) {
         replaceLocalRecord(savedRecord);
-        loadRecord(savedRecord);
-        setStatus('Record data was updated, but the image failed: ' + err.message);
+        setStatus('Record data was updated, but an image or visibility update failed: ' + err.message + '. Your entries are retained. Use Update to retry.');
       });
     }).catch(function (err) { setStatus(err.message); });
 });
@@ -1679,7 +1846,16 @@ function simulationControls() {
   document.getElementById('simulation-next').disabled = simulationSaving || simulationIndex >= simulationRecords.length - 1;
   document.getElementById('simulation-close').disabled = simulationSaving;
   var row = simulationRecords[simulationIndex];
-  document.getElementById('simulation-answer').disabled = simulationSaving || !row || !row._CAN_EDIT || !simulationLoaded.day || !simulationLoaded.night;
+  var disabled = simulationSaving || !row || !row._CAN_EDIT || !simulationLoaded.day || !simulationLoaded.night;
+  document.getElementById('simulation-answer').disabled = disabled;
+  document.querySelectorAll('input[name="simulation-answer"]').forEach(function (input) {
+    input.disabled = disabled;
+  });
+  document.getElementById('simulation-review-help').textContent = !row || !row._CAN_EDIT
+    ? 'You do not have permission to review this record.'
+    : simulationSaving ? 'Saving your review…'
+    : !simulationLoaded.day || !simulationLoaded.night ? 'Both day and night images must load before you can choose Yes or No.'
+    : 'Choose Yes or No. Your choice saves automatically.';
 }
 function showSimulationRecord() {
   var row = simulationRecords[simulationIndex];
@@ -1696,11 +1872,12 @@ function showSimulationRecord() {
     var img = document.getElementById('simulation-' + kind);
     var missing = document.getElementById('simulation-' + kind + '-missing');
     var url = accessibleImageUrl(row[kind === 'day' ? 'IMAGE_LINK' : 'NIGHT_SIMULATION'] || '');
-    img.onload = function () { if (simulationIndex !== displayedRecordIndex) return; simulationLoaded[kind] = true; simulationControls(); };
-    img.onerror = function () { if (simulationIndex !== displayedRecordIndex) return; img.hidden = true; missing.hidden = false; simulationLoaded[kind] = false; simulationControls(); };
-    img.hidden = !url;
     missing.hidden = !!url;
-    if (url) img.src = url + (url.indexOf('?') === -1 ? '?' : '&') + 'review=' + encodeURIComponent(row._REVIEW_VERSION); else img.removeAttribute('src');
+    loadPreviewImage(img, url ? url + (url.indexOf('?') === -1 ? '?' : '&') + 'review=' + encodeURIComponent(row._REVIEW_VERSION) : '', kind + ' image', function (success) {
+      if (simulationIndex !== displayedRecordIndex) return;
+      simulationLoaded[kind] = success;
+      simulationControls();
+    });
   });
   simulationControls();
 }
@@ -1715,16 +1892,22 @@ function openSimulationComparison(recordId) {
     showSimulationRecord();
   }).catch(function (err) { setStatus(err.message); });
 }
-document.getElementById('compare-simulations-btn').addEventListener('click', function () { openSimulationComparison(); });
+document.getElementById('compare-simulations-btn').addEventListener('click', function () {
+  openSimulationComparison(stagingEdit ? null : editingId);
+});
 function simulationCompareButton(record) {
-  var button = el('button', {type:'button', class:'record-compare-btn', text:'Compare', title:'Compare Day and Night Simulation for record ' + record.ID, 'aria-label':'Compare day and night simulation for record ' + record.ID});
+  var button = el('button', {type:'button', class:'record-compare-btn', title:'Compare day and night images for record ' + record.ID, 'aria-label':'Compare day and night simulation for record ' + record.ID});
+  button.appendChild(el('img', {src:"{% static 'inventory/img/compare.svg' %}", class:'record-action-icon', alt:'', 'aria-hidden':'true'}));
   button.addEventListener('click', function (event) { event.stopPropagation(); openSimulationComparison(record.ID); });
   return button;
 }
 document.getElementById('simulation-prev').addEventListener('click', function () { if (!simulationSaving && simulationIndex > 0) { simulationIndex--; showSimulationRecord(); } });
 document.getElementById('simulation-next').addEventListener('click', function () { if (!simulationSaving && simulationIndex < simulationRecords.length - 1) { simulationIndex++; showSimulationRecord(); } });
 document.getElementById('simulation-close').addEventListener('click', function () { if (!simulationSaving) simulationDialog.close(); });
-simulationDialog.addEventListener('cancel', function (event) { if (simulationSaving) event.preventDefault(); });
+simulationDialog.addEventListener('cancel', function (event) {
+  if (!imageLightbox.classList.contains('hidden')) { event.preventDefault(); closeImageLightbox(); }
+  else if (simulationSaving) event.preventDefault();
+});
 document.querySelectorAll('input[name="simulation-answer"]').forEach(function (input) {
   input.addEventListener('change', function () {
     var row = simulationRecords[simulationIndex];
@@ -1847,12 +2030,12 @@ function buildTableHead() {
     });
     return;
   }
-  tr.appendChild(el('th', { text: currentTabKey === 'sign' ? 'Actions' : 'Insert', class: 'insert-action-heading' }));
+  tr.appendChild(el('th', { text: 'Actions', class: 'insert-action-heading' }));
   spec.columns.forEach(function (col) { tr.appendChild(el('th', { text: col.replace(/_/g, ' ') })); });
 }
 
 function aiDisplayColumns() {
-  var columns = spec.columns.slice();
+  var columns = ["SOURCE_FILE", "FRAME"].concat(spec.columns.filter(function(c){return c !== "FRAME" && c !== "SOURCE_FILE";}));
   if (currentTabKey === 'sign') {
     ['FRAME', 'TIME', 'X1', 'Y1', 'X2', 'Y2', 'AI_LATITUDE', 'AI_LONGITUDE', 'ELEVATION', 'IMAGE'].forEach(function (field) {
       if (columns.indexOf(field) === -1) columns.push(field);
@@ -1919,7 +2102,7 @@ function loadAIProcessedRecords() {
 function selectAIProcessedRecord(record) {
   loadRecord(record);
   setStatus(
-    'AI row selected (frame ' + (record.FRAME || 'not provided') + '). ' +
+    'AI row selected (' + (record.SOURCE_FILE || 'Legacy (unknown file)') + ' · Frame ' + (record.FRAME || 'not provided') + '). ' +
     'AI fields are preserved in this Sign Inventory record; complete the manual fields and update.'
   );
   document.getElementById('form-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1927,24 +2110,28 @@ function selectAIProcessedRecord(record) {
 
 function showStaging(show) {
   document.getElementById('staging-panel').hidden = !show;
-  ['search-row','table-scroll','record-pagination'].forEach(function (id) { document.getElementById(id).style.display = show ? 'none' : ''; });
+  ['search-row','table-scroll','record-pagination','bulk-record-actions'].forEach(function (id) { document.getElementById(id).style.display = show ? 'none' : ''; });
   document.querySelectorAll('.records-resize-help').forEach(function (node) { node.style.display = show ? 'none' : ''; });
 }
+var stagingLoadVersion = 0;
 function loadStaging() {
+  var version = ++stagingLoadVersion;
   var key = currentTabKey;
+  stagingRows = []; stagingSelection = new Set();
+  if (recordViewMode === 'staging') { showStaging(true); renderStaging(); document.getElementById('staging-status').textContent = 'Loading ' + key + ' Staging…'; }
   return apiRequest('/api/' + key + '/staging').then(function (res) {
     if (!res.ok) throw new Error(res.data.error || 'Could not load Staging.');
-    if (key !== currentTabKey) return;
+    if (key !== currentTabKey || version !== stagingLoadVersion) return;
     stagingRows = res.data.records;
     stagingSelection = new Set();
     if (recordViewMode === 'staging') { showStaging(true); renderStaging(); }
-  }).catch(function (error) { setStatus(error.message); document.getElementById('staging-status').textContent = error.message; });
+  }).catch(function (error) { if (key !== currentTabKey || version !== stagingLoadVersion) return; setStatus(error.message); document.getElementById('staging-status').textContent = error.message; });
 }
 function filteredStaging() {
   var filter = document.getElementById('staging-filter').value;
   var rows = stagingRows.filter(function (row) { return filter === 'all' || (filter === 'OK' ? row.status === 'OK' : row[filter]); });
   var sort = document.getElementById('staging-sort').value;
-  return rows.slice().sort(function (a,b) { return sort === 'status' ? a.status.localeCompare(b.status) : sort === 'uid' ? String(a.data.SIGN_UID || '').localeCompare(String(b.data.SIGN_UID || '')) : a.id-b.id; });
+  return rows.slice().sort(function (a,b) { return sort === 'status' ? a.status.localeCompare(b.status) : sort === 'uid' ? String(a.data[a.uid_field || 'SIGN_UID'] || '').localeCompare(String(b.data[b.uid_field || 'SIGN_UID'] || '')) : a.id-b.id; });
 }
 function stagingAction(row, action) {
   var button = el('button', {type:'button', text:action});
@@ -1966,6 +2153,11 @@ function updateStagingSelection() {
   document.getElementById('staging-approve-selected').textContent = 'Approve selected' + (stagingSelection.size ? ' (' + stagingSelection.size + ')' : '');
 }
 function renderStaging() {
+  var type = document.getElementById('staging-type');
+  type.value = currentTabKey;
+  type.disabled = stagingBusy;
+  var name = currentTabKey.charAt(0).toUpperCase() + currentTabKey.slice(1);
+  document.getElementById('staging-scope-help').textContent = name + ' Staging — approval moves only these rows to ' + name + ' Inventory Records. Other inventory types stay in their own Staging tabs.';
   var rows = filteredStaging();
   updateStagingSelection();
   document.getElementById('staging-select').disabled = stagingBusy || !rows.length;
@@ -1987,12 +2179,12 @@ function renderStaging() {
     var actions=el('td'); ['Approve','Edit','Reject'].forEach(function(action){actions.appendChild(stagingAction(row,action));});tr.appendChild(actions);
     var statusCell=el('td'); statusCell.appendChild(el('span',{class:'staging-status-badge' + (row.status === 'OK' ? ' is-ok' : ''),text:row.status}));tr.appendChild(statusCell);spec.columns.forEach(function(c){tr.appendChild(el('td',{text:row.data[c] || ''}));});body.appendChild(tr);
   });
-  document.getElementById('staging-status').textContent=rows.length+' of '+stagingRows.length+' staged rows. Flagged rows must be resolved before approval.';
+  document.getElementById('staging-status').textContent=rows.length+' of '+stagingRows.length+' '+name+' staged rows. Flagged rows must be resolved before approval.';
   var duplicates=document.getElementById('staging-duplicates');duplicates.innerHTML='';
-  var visibleDuplicateKeys=new Set(rows.slice((stagingPage - 1) * 100, stagingPage * 100).filter(function(row){return row.duplicate;}).map(function(row){return String(row.data.SIGN_UID||'').trim().toLowerCase();}));
-  var groups={};stagingRows.filter(function(row){return row.duplicate && visibleDuplicateKeys.has(String(row.data.SIGN_UID||'').trim().toLowerCase());}).forEach(function(row){var key=String(row.data.SIGN_UID||'').trim().toLowerCase();(groups[key] ||= []).push(row);});
+  var visibleDuplicateKeys=new Set(rows.slice((stagingPage - 1) * 100, stagingPage * 100).filter(function(row){return row.duplicate;}).map(function(row){return String(row.duplicate_key || row.data.SIGN_UID || '').trim().toLowerCase();}));
+  var groups={};stagingRows.filter(function(row){return row.duplicate && visibleDuplicateKeys.has(String(row.duplicate_key || row.data.SIGN_UID || '').trim().toLowerCase());}).forEach(function(row){var key=String(row.duplicate_key || row.data.SIGN_UID || '').trim().toLowerCase();(groups[key] ||= []).push(row);});
   Object.keys(groups).forEach(function(key){
-    var section=el('section',{class:'staging-duplicate-group'});section.appendChild(el('h3',{text:'Duplicate SIGN_UID: '+groups[key][0].data.SIGN_UID}));
+    var section=el('section',{class:'staging-duplicate-group'});section.appendChild(el('h3',{text:'Duplicate '+(groups[key][0].uid_field || 'SIGN_UID')+': '+(groups[key][0].data[groups[key][0].uid_field || 'SIGN_UID'] || 'Identical row')}));
     section.appendChild(el('p',{text:'Review versions side by side. Reject the unwanted row(s), then approve the remaining version.'}));
     var pair=el('div',{class:'staging-duplicate-pair'});
     groups[key].forEach(function(row){var card=el('article');card.appendChild(el('strong',{text:row.source+' · Row '+row.source_row}));
@@ -2044,6 +2236,7 @@ function editStagedRow(row){
   if (stagingEdit && !confirm("Discard unsaved staging edits and open another row?")) return;
   stagingEdit=row;document.body.classList.add('editing-staging');editingId=null;buildForm();
   spec.columns.forEach(function(c){setVal(c,spec.date_fields.includes(c)?storedToIso(row.data[c]||''):row.data[c]||'');});
+  applyMutcdReferencePreview(getVal('MUTCD'), getVal('WORD_DESCRIPTION'));
   editingId=row.id;setRecordActionPermissions(true,true);document.getElementById('update-btn').textContent='Save to Staging';
   setFormPanelCollapsed(false,true);setStatus('Editing staged row '+row.source_row+'. Saving does not approve it.');document.getElementById('form-panel').scrollIntoView({block:'start'});
 }
@@ -2052,13 +2245,19 @@ document.getElementById('inventory-sheet-file').addEventListener('change',functi
   var input=this,file=input.files[0];if(!file)return;var key=currentTabKey;var data=new FormData();data.append('file',file);input.disabled=true;
   document.getElementById('inventory-upload-status').textContent='Uploading to Staging...';
   trackedFetch('/api/'+key+'/staging',{method:'POST',headers:{'X-CSRFToken':csrfToken},body:data}).then(parseApiResponse).then(function(res){
-    if(!res.ok)throw new Error(res.data.error||'Upload failed.');document.getElementById('inventory-upload-status').textContent=res.data.imported+' rows staged. Nothing added to live inventory.';
+    if(!res.ok)throw new Error(res.data.error||'Upload failed.');
+    var summary=Object.entries(res.data.by_type||{}).map(function(entry){return entry[0]+': '+entry[1];}).join(', ');
+    document.getElementById('inventory-upload-status').textContent=res.data.imported+' new rows staged'+(summary?' ('+summary+')':'')+'. '+(res.data.skipped ? res.data.skipped+' identical rows already in Staging were skipped. ' : '')+'Review each inventory tab in Staging. Nothing added to live inventory.';
     if(key===currentTabKey){recordViewMode='staging';buildRecordModeBar();return loadStaging();}
   }).catch(function(error){document.getElementById('inventory-upload-status').textContent=error.message;}).finally(function(){input.disabled=false;input.value='';});
 });
 ['staging-filter','staging-sort'].forEach(function(id){document.getElementById(id).addEventListener('change',function(){stagingPage=1;renderStaging();});});
 document.getElementById('staging-prev').addEventListener('click',function(){stagingPage--;renderStaging();});
 document.getElementById('staging-next').addEventListener('click',function(){stagingPage++;renderStaging();});
+document.getElementById('staging-type').addEventListener('change',function(){
+  if(stagingEdit && !confirm('Leave the staging editor and discard unsaved changes?')) {this.value=currentTabKey;return;}
+  switchTab(this.value, 'staging');
+});
 document.getElementById('staging-select').addEventListener('click',function(){filteredStaging().forEach(function(row){stagingSelection.add(row.id);});renderStaging();});
 document.getElementById('staging-unselect').addEventListener('click',function(){stagingSelection.clear();renderStaging();});
 document.getElementById('staging-approve-selected').addEventListener('click',function(){approveStaged(stagingRows.filter(function(row){return stagingSelection.has(row.id);}));});
@@ -2134,7 +2333,90 @@ document.getElementById('edit-save').addEventListener('click', function () {
   });
 });
 
+var bulkRecordSelection = new Set();
+var bulkRecordKey = '';
+var bulkRecordBusy = false;
+var bulkPageRecords = [];
+function updateBulkRecordActions() {
+  var count = bulkRecordSelection.size;
+  var button = document.getElementById('bulk-delete-records');
+  document.getElementById('bulk-selection-count').textContent = count + ' selected';
+  document.getElementById('bulk-delete-label').textContent = bulkRecordBusy ? 'Deleting…' : 'Delete selected';
+  button.setAttribute('aria-label', 'Delete ' + count + ' selected records');
+  button.disabled = bulkRecordBusy || count === 0;
+  document.getElementById('bulk-select-page').disabled = bulkRecordBusy;
+  document.getElementById('bulk-clear-selection').disabled = bulkRecordBusy || count === 0;
+}
+document.getElementById('bulk-select-page').addEventListener('click', function () {
+  bulkPageRecords.forEach(function (row) { if (row._CAN_EDIT === true) bulkRecordSelection.add(row.ID); });
+  renderTable();
+});
+document.getElementById('bulk-clear-selection').addEventListener('click', function () { bulkRecordSelection.clear(); renderTable(); });
+document.getElementById('bulk-delete-records').addEventListener('click', function () {
+  if (bulkRecordBusy || !bulkRecordSelection.size) return;
+  var key = currentTabKey;
+  var ids = Array.from(bulkRecordSelection);
+  confirmDestructive('Delete ' + ids.length + ' records?',
+    'The selected ' + key + ' inventory records will be permanently deleted. This cannot be undone.',
+    'Delete selected', function () {
+      bulkRecordBusy = true;
+      updateBulkRecordActions();
+      return apiRequest('/api/' + key + '/records', {method:'DELETE', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids:ids})})
+        .then(function (res) {
+          if (!res.ok) throw new Error(res.data.error || 'Could not delete the selected records.');
+          if (key !== currentTabKey) return;
+          allRecords = allRecords.filter(function (row) { return !ids.includes(row.ID); });
+          aiProcessedRecords = aiProcessedRecords.filter(function (row) { return !ids.includes(row.ID); });
+          if (!stagingEdit && ids.includes(editingId)) clearForm(false);
+          if (ids.includes(insertAfterId)) { insertAfterId = null; updateInsertMode(); }
+          bulkRecordSelection.clear();
+          document.getElementById('bulk-record-status').textContent = ids.length + ' records deleted.';
+        }).catch(function (error) {
+          document.getElementById('bulk-record-status').textContent = error.message;
+        }).finally(function () { bulkRecordBusy = false; renderTable(); });
+    });
+});
+function recordDeleteButton(record) {
+  var key = currentTabKey;
+  var button = el('button', {type:'button', class:'record-delete-btn',
+    title:record._CAN_EDIT === true ? 'Delete record ' + record.ID : creatorOnlyTooltip,
+    'aria-label':'Delete record ' + record.ID});
+  button.appendChild(el('img', {src:"{% static 'inventory/img/trash.svg' %}", class:'record-delete-icon', alt:'', 'aria-hidden':'true'}));
+  button.disabled = record._CAN_EDIT !== true;
+  button.addEventListener('click', function (event) {
+    event.stopPropagation();
+    if (button.disabled || record._CAN_EDIT !== true) return;
+    confirmDestructive('Delete record ' + record.ID + '?',
+      'This record will be permanently deleted from ' + key + ' inventory. This cannot be undone.',
+      'Delete record', function () {
+        button.disabled = true;
+        return apiRequest('/api/' + key + '/records/' + record.ID, {method:'DELETE'}).then(function (res) {
+          if (!res.ok) throw new Error(res.data.error || 'Could not delete this record.');
+          if (key !== currentTabKey) return;
+          allRecords = allRecords.filter(function (row) { return row.ID !== record.ID; });
+          if (editingId === record.ID && !stagingEdit) clearForm(false);
+          if (insertAfterId === record.ID) { insertAfterId = null; updateInsertMode(); }
+          renderTable();
+          setStatus('Record ' + record.ID + ' deleted.');
+        }).catch(function (error) {
+          button.disabled = false;
+          if (key === currentTabKey) setStatus(error.message);
+        });
+      });
+  });
+  return button;
+}
+
 function renderTable() {
+  document.getElementById('bulk-record-actions').hidden = recordViewMode !== 'inventory';
+  if (bulkRecordKey !== currentTabKey + ':' + recordViewMode) {
+    bulkRecordSelection.clear();
+    bulkRecordKey = currentTabKey + ':' + recordViewMode;
+    document.getElementById('bulk-record-status').textContent = '';
+  }
+  var availableIds = new Set(allRecords.filter(function (row) { return row._CAN_EDIT === true; }).map(function (row) { return row.ID; }));
+  bulkRecordSelection.forEach(function (id) { if (!availableIds.has(id)) bulkRecordSelection.delete(id); });
+  updateBulkRecordActions();
   if (recordViewMode === "staging") { renderStaging(); return; }
   updateEditNavigation();
   var query = document.getElementById('search-box').value.trim().toLowerCase();
@@ -2151,6 +2433,7 @@ function renderTable() {
   currentRecordPage = Math.min(Math.max(1, currentRecordPage), totalPages);
   var pageStart = (currentRecordPage - 1) * RECORDS_PER_PAGE;
   var pageRecords = filtered.slice(pageStart, pageStart + RECORDS_PER_PAGE);
+  bulkPageRecords = pageRecords;
 
   if (recordViewMode === 'ai') {
     pageRecords.forEach(function (rec) {
@@ -2174,17 +2457,30 @@ function renderTable() {
     var tr = el('tr', { 'data-id': rec.ID });
     if (rec.ID === editingId) tr.classList.add('selected');
     var insertCell = el('td', { class: 'insert-action-cell' });
+    var rowActions = el('div', {class:'record-row-actions'});
+    var selection = el('input', {type:'checkbox', 'aria-label':'Select record ' + rec.ID});
+    selection.checked = bulkRecordSelection.has(rec.ID);
+    selection.disabled = bulkRecordBusy || rec._CAN_EDIT !== true;
+    selection.addEventListener('click', function (event) { event.stopPropagation(); });
+    selection.addEventListener('change', function () {
+      if (selection.checked) bulkRecordSelection.add(rec.ID); else bulkRecordSelection.delete(rec.ID);
+      updateBulkRecordActions();
+    });
+    rowActions.appendChild(selection);
     var insertButton = el('button', {
-      type: 'button', class: 'insert-below-btn', text: 'Insert below',
+      type: 'button', class: 'insert-below-btn',
       title: 'Insert a new record immediately below ID ' + rec.ID,
       'aria-label': 'Insert new record below record ' + rec.ID
     });
+    insertButton.appendChild(el('img', {src:"{% static 'inventory/img/insert-below.svg' %}", class:'record-action-icon', alt:'', 'aria-hidden':'true'}));
     insertButton.addEventListener('click', function (event) {
       event.stopPropagation();
       beginInsertBelow(rec);
     });
-    if (currentTabKey === 'sign') insertCell.appendChild(simulationCompareButton(rec));
-    insertCell.appendChild(insertButton);
+    if (currentTabKey === 'sign') rowActions.appendChild(simulationCompareButton(rec));
+    rowActions.appendChild(insertButton);
+    rowActions.appendChild(recordDeleteButton(rec));
+    insertCell.appendChild(rowActions);
     tr.appendChild(insertCell);
     spec.columns.forEach(function (col) {
       var td = el('td');

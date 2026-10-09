@@ -36,6 +36,12 @@ def get_spec(key):
     if "IMAGE_LINK" not in wide_cols:
         wide_cols.append("IMAGE_LINK")
     if key == "sign":
+        # Optional plain-text metadata, separate from simulation uploads.
+        for field in ("IMAGE", "RENAME"):
+            if field not in config["columns"]:
+                config["columns"].insert(config["columns"].index("IMAGE_LINK"), field)
+            if field not in config["text_fields"]:
+                config["text_fields"].append(field)
         for group in ("columns", "auto_fields", "wide_cols"):
             config[group] = [f for f in config[group] if f != "NIGHT_SIMULATION"]
             config[group].insert(max(0, len(config[group]) - 1), "NIGHT_SIMULATION")

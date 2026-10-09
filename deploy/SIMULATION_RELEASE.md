@@ -49,3 +49,11 @@ For rollback, restore the previous source and collected static assets. Restore t
 - Run `node tests/frontend_review.cjs` for frontend pagination and URL policy tests. For an optional real-workbook integration check, set `INVENTORY_REVIEW_WORKBOOK` to a local XLSX path before running the Django suite; it uses an isolated test database and does not import into production.
 
 Production readiness still requires validation on the target host: TLS/proxy configuration, SMTP delivery, backup restore, browser acceptance testing, and appropriate load tests. Local automated checks are not a certification that all production risks are eliminated.
+
+## File-scoped frame assignments (September 25)
+
+Run migrations 0022–0024 before starting the updated app. Frame assignment scope is now project + inventory type + source filename + frame range. The assignment form includes inventory type and source-file dropdowns, and frame choices show the filename alongside the frame number. Identical frame numbers from different files remain independently assignable.
+
+Migration 0023 copies existing source filenames from AI metadata into the indexed record field. Existing assignments are expanded to the file/type scopes they already covered, preserving current access. Records without historical source metadata remain in a separate legacy/unknown-file scope; they do not match newly uploaded named files. Review the migrated assignments if old global ranges unintentionally included multiple files. Reimports with the same filename continue updating exact matching detections; different filenames are kept separate. Use distinct filenames for different videos.
+
+Back up the database before migration. For rollback, restore the pre-migration database and previous code together; do not simply reverse these data migrations. The original AI upload mapping remains Sign-only; source-scoped assignment and display support all four inventory types.

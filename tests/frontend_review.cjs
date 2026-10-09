@@ -8,6 +8,7 @@ function element() { return {children:[], value:'', textContent:'', appendChild(
 const nodes = new Map();
 const node = id => { if(!nodes.has(id)) nodes.set(id,element()); return nodes.get(id); };
 const context = {
+  currentTabKey:'sign',
   document:{getElementById:node}, el:(tag,attrs={})=>Object.assign(element(),attrs),
   stagingRows:Array.from({length:5742},(_,i)=>({id:i+1,data:{ID:i+1,SIGN_UID:'S'+i},status:'OK'})),
   stagingSelection:new Set(),stagingPage:1,stagingBusy:false,spec:{columns:['ID','SIGN_UID'],image_origins:['https://stpaul.bluedometech.com']},

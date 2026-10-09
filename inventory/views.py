@@ -209,10 +209,11 @@ def visible_tab_records(request, key):
         visibility = Q(owner=request.user, is_ai_processed=False)
         ranges = FrameRangeAssignment.objects.filter(
             project=project, user=request.user
-        ).values_list("start_frame", "end_frame")
-        for start_frame, end_frame in ranges:
+        ).values_list("tab", "source_file", "start_frame", "end_frame")
+        for assigned_tab, source_file, start_frame, end_frame in ranges:
+            if assigned_tab != key: continue
             visibility |= Q(
-                is_ai_processed=True,
+                is_ai_processed=True, source_file=source_file,
                 ai_frame__gte=start_frame,
                 ai_frame__lte=end_frame,
             )
@@ -233,16 +234,18 @@ def can_modify_record(request, record):
         ranges_by_project[record.project_id] = list(
             FrameRangeAssignment.objects.filter(
                 project_id=record.project_id, user=request.user
-            ).values_list("start_frame", "end_frame")
+            ).values_list("tab", "source_file", "start_frame", "end_frame")
         )
     return any(
-        start <= record.ai_frame <= end
-        for start, end in ranges_by_project[record.project_id]
+        tab == record.tab and source == record.source_file and start <= record.ai_frame <= end
+        for tab, source, start, end in ranges_by_project[record.project_id]
     )
 
 
 def record_api_row(request, record):
     row = record.as_row()
+    if record.is_ai_processed:
+        row["SOURCE_FILE"] = record.source_file or "Legacy (unknown file)"
     row.pop("_IMAGE_STORAGE", None)
     owner_name = "Legacy / unknown"
     if record.owner:
@@ -463,16 +466,17 @@ def serialize_sign_save(view):
     def wrapped(request, key, *args, **kwargs):
         if key != 'sign' or request.method not in {'POST', 'PUT'}:
             return view(request, key, *args, **kwargs)
-        project, error = require_selected_project(request)
-        if error:
-            return error
-        with locks[key], transaction.atomic():
-            # Acquire a database write lock before reading IDs, including on SQLite.
-            Project.objects.filter(pk=project.pk).update(name=F('name'))
-            response = view(request, key, *args, **kwargs)
-            if response.status_code >= 400:
-                transaction.set_rollback(True)
-            return response
+        with locks[key]:
+            project, error = require_selected_project(request)
+            if error:
+                return error
+            with transaction.atomic():
+                # Acquire a database write lock before reading IDs, including on SQLite.
+                Project.objects.filter(pk=project.pk).update(name=F('name'))
+                response = view(request, key, *args, **kwargs)
+                if response.status_code >= 400:
+                    transaction.set_rollback(True)
+                return response
     return wrapped
 
 
@@ -584,10 +588,22 @@ def api_records(request, key):
             })
 
     if request.method == "DELETE":
+        ids = None
+        if request.body:
+            payload = parse_json_body(request)
+            ids = payload.get("ids")
+            if not isinstance(ids, list) or not ids or len(ids) > 1000 or any(type(value) is not int or value < 1 for value in ids):
+                return JsonResponse({"error": "Select between 1 and 1000 valid records."}, status=400)
+            ids = set(ids)
         with locks[key]:
             try:
                 with transaction.atomic():
                     records = visible_tab_records(request, key)
+                    if ids is not None:
+                        records = records.filter(tab_record_id__in=ids)
+                        selected = list(records)
+                        if len(selected) != len(ids) or any(not can_modify_record(request, record) for record in selected):
+                            return JsonResponse({"error": "Some selected records are unavailable or cannot be deleted by you. Nothing was deleted."}, status=403)
                     if not request.user.is_staff:
                         records = records.filter(owner=request.user)
                     records.delete()
@@ -619,6 +635,7 @@ def api_ai_processed_records(request, key):
                 assignment.user.get_full_name().strip() or assignment.user.username
                 for assignment in assignments
                 if record.ai_frame is not None
+                and assignment.tab == record.tab and assignment.source_file == record.source_file
                 and assignment.start_frame <= record.ai_frame <= assignment.end_frame
             ]
             row["ASSIGNMENT_STATUS"] = ", ".join(assigned_users) or "Not Assigned"
@@ -674,7 +691,7 @@ def api_record_detail(request, key, rec_id):
             if key == "sign":
                 row["NIGHT_SIMULATION"] = str(rec.data.get("NIGHT_SIMULATION", "") or "")
                 row["Night Sumulation Visibility"] = str(raw_row.get("Night Sumulation Visibility", rec.data.get("Night Sumulation Visibility", "")) or "")
-            if key == "sign" and rec.is_ai_processed:
+            if rec.is_ai_processed:
                 for field in SIGN_AI_EXTRA_FIELDS:
                     row[field] = rec.data.get(field, "")
                 row[AI_MARKER_FIELD] = True
@@ -803,7 +820,7 @@ def api_simulation_review(request, rec_id):
         if body.get("version") != rec.updated_at.isoformat():
             return JsonResponse({"error": "This record changed. Close and reopen the comparison to review the latest images."}, status=409)
         if not rec.data.get("IMAGE_LINK") or not rec.data.get("NIGHT_SIMULATION"):
-            return JsonResponse({"error": "Upload both day and night images before reviewing."}, status=400)
+            return JsonResponse({"error": "Both day and night images are required before reviewing."}, status=400)
         data = dict(rec.data)
         data["Night Sumulation Visibility"] = answer
         rec.data = data

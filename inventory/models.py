@@ -20,6 +20,13 @@ from django.db import models
 
 # Project-scoped inventory access.
 
+class UserProfile(models.Model):
+    user = models.OneToOneField('auth.User', on_delete=models.CASCADE, related_name='inventory_profile')
+    mobile = models.CharField(max_length=25, blank=True)
+    delegated_admin = models.BooleanField(default=False)
+    photo = models.BinaryField(null=True, blank=True)
+
+
 
 class Jurisdiction(models.Model):
     country = models.CharField(max_length=100)
@@ -176,6 +183,8 @@ class FrameRangeAssignment(models.Model):
     user = models.ForeignKey(
         "auth.User", on_delete=models.CASCADE, related_name="inventory_frame_ranges"
     )
+    tab = models.CharField(max_length=20, default="sign", choices=[(k, k.title()) for k in ("sign", "pavement", "lane", "curb")])
+    source_file = models.CharField(max_length=255, blank=True, default="")
     start_frame = models.PositiveIntegerField()
     end_frame = models.PositiveIntegerField()
     created_at = models.DateTimeField(auto_now_add=True)
@@ -188,13 +197,13 @@ class FrameRangeAssignment(models.Model):
                 name="frame_range_start_lte_end",
             ),
             models.UniqueConstraint(
-                fields=["project", "user", "start_frame", "end_frame"],
+                fields=["project", "tab", "source_file", "user", "start_frame", "end_frame"],
                 name="unique_project_user_frame_range",
             ),
         ]
         indexes = [
             models.Index(
-                fields=["project", "user", "start_frame", "end_frame"],
+                fields=["project", "tab", "source_file", "user", "start_frame", "end_frame"],
                 name="frame_range_lookup_idx",
             )
         ]
@@ -211,18 +220,18 @@ class FrameRangeAssignment(models.Model):
             if not self.project.members.filter(pk=self.user_id).exists():
                 raise ValidationError({"user": "Assign the user to this project before adding a frame range."})
             overlaps = type(self).objects.filter(
-                project_id=self.project_id,
+                project_id=self.project_id, tab=self.tab, source_file=self.source_file,
                 start_frame__lte=self.end_frame,
                 end_frame__gte=self.start_frame,
             ).exclude(pk=self.pk)
             if overlaps.exists():
                 raise ValidationError(
-                    "This range overlaps another assignment in the same project. "
+                    "This range overlaps another assignment in the same project, inventory type and source file. "
                     "Frames can only be assigned to one user."
                 )
 
     def __str__(self):
-        return f"{self.project}: {self.start_frame}–{self.end_frame} → {self.user}"
+        return f"{self.project} / {self.tab} / {self.source_file or 'Legacy (unknown file)'}: {self.start_frame}–{self.end_frame} → {self.user}"
 
 
 class DropdownOption(models.Model):
@@ -332,6 +341,7 @@ class TabRecord(models.Model):
     tab_record_id = models.PositiveIntegerField()  # the per-tab sequential "ID" shown to users
     display_order = models.PositiveIntegerField(default=0, db_index=True)
     is_ai_processed = models.BooleanField(default=False, db_index=True)
+    source_file = models.CharField(max_length=255, blank=True, default="", db_index=True)
     ai_frame = models.PositiveIntegerField(null=True, blank=True, db_index=True)
     data = models.JSONField(default=dict)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
@@ -344,6 +354,7 @@ class TabRecord(models.Model):
             models.Index(fields=["tab", "tab_record_id"]),
             models.Index(fields=["owner", "tab"], name="inventory_owner_tab_idx"),
             models.Index(fields=["project", "tab"], name="inventory_project_tab_idx"),
+            models.Index(fields=["project", "tab", "source_file", "ai_frame"], name="inventory_source_frame_idx"),
             models.Index(
                 fields=["project", "tab", "is_ai_processed", "ai_frame"],
                 name="inventory_ai_frame_idx",
@@ -362,6 +373,9 @@ class TabRecord(models.Model):
     def save(self, *args, **kwargs):
         if (self.data or {}).get("_AI_PROCESSED"):
             self.is_ai_processed = True
+            self.source_file = str((self.data or {}).get("_AI_SOURCE_FILE", self.source_file) or "")[:255]
+            if kwargs.get("update_fields") is not None:
+                kwargs["update_fields"] = set(kwargs["update_fields"]) | {"source_file", "ai_frame", "is_ai_processed"}
             try:
                 frame = Decimal(str((self.data or {}).get("FRAME", "")).strip())
                 self.ai_frame = (

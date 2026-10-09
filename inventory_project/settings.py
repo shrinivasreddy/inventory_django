@@ -50,6 +50,7 @@ MIDDLEWARE = [
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
+    "inventory.middleware.AuthenticationRateLimitMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "inventory.middleware.SessionExpiryMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",

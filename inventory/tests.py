@@ -143,6 +143,7 @@ class AIProcessedRecordTests(TestCase):
                 "ELEVATION": "8.0001", "IMAGE": "frames/sign-101.png",
                 "MUTCD": "OLD", "WORD_DESCRIPTION": "Old text",
                 "STREET_NAME": "Preserve this manual value", "_AI_PROCESSED": True,
+                "_AI_SOURCE_FILE": "exact.csv",
             },
         )
         self.client.force_login(self.admin)
@@ -170,7 +171,7 @@ class AIProcessedRecordTests(TestCase):
         ).encode()
         response = self.client.post(upload_url, {
             "section": "sign", "excluded_codes": "NULL\nNOT SIGN\nOTHER",
-            "data_file": SimpleUploadedFile("different.csv", tiny_difference),
+            "data_file": SimpleUploadedFile("exact.csv", tiny_difference),
         })
         self.assertRedirects(response, reverse("admin:inventory_tabrecord_changelist"))
         self.assertEqual(TabRecord.objects.filter(project=self.project).count(), 2)
@@ -277,8 +278,10 @@ class AIProcessedRecordTests(TestCase):
         response = self.client.get(reverse("api_export", args=["sign"]))
         workbook = load_workbook(io.BytesIO(response.content), read_only=True)
         headers = [cell.value for cell in next(workbook.active.iter_rows(min_row=1, max_row=1))]
-        for field in ("FRAME", "TIME", "X1", "Y1", "X2", "Y2", "AI_LATITUDE", "AI_LONGITUDE", "ELEVATION", "IMAGE"):
+        for field in ("FRAME", "TIME", "X1", "Y1", "X2", "Y2", "AI_LATITUDE", "AI_LONGITUDE", "ELEVATION"):
             self.assertNotIn(field, headers)
+        self.assertEqual(headers.count("IMAGE"), 1)
+        self.assertEqual(headers.count("RENAME"), 1)
         self.assertIn("MUTCD", headers)
         self.assertIn("WORD_DESCRIPTION", headers)
 
@@ -422,7 +425,7 @@ class FrameRangeAccessTests(TestCase):
         self.assertEqual(end_values, ["", "100"])
 
         assigned = FrameRangeAssignmentForm(
-            data={"user": self.other.pk, "start_frame": "100", "end_frame": "100"},
+            data={"tab":"sign", "source_file":"", "user": self.other.pk, "start_frame": "100", "end_frame": "100"},
             project=self.project,
         )
         self.assertTrue(assigned.is_valid(), assigned.errors)
@@ -477,7 +480,7 @@ class InventoryImageTests(TestCase):
             view = self.client.get(self.record.data["IMAGE_LINK"])
             self.assertEqual(view.status_code, 200)
             self.assertEqual(view["Content-Type"], "image/png")
-            view.close()
+            b"".join(view.streaming_content)
 
             self.client.force_login(self.other)
             self.assertEqual(self.client.get(self.record.data["IMAGE_LINK"]).status_code, 404)
@@ -504,7 +507,7 @@ class InventoryImageTests(TestCase):
             self.client.post(url, {"image": self.image_upload("PNG", "green")})
             view = self.client.get(row["NIGHT_SIMULATION"])
             self.assertEqual(view.status_code, 200)
-            view.close()
+            b"".join(view.streaming_content)
             self.client.post(url, {"slot": "night_simulation", "image": self.image_upload("JPEG", "blue")})
             directory = Path(root) / "day-simulation/Image Project/1"
             night_directory = Path(root) / "night-simulation/Image Project/1"
@@ -515,7 +518,7 @@ class InventoryImageTests(TestCase):
             self.project.save()
             view = self.client.get(self.record.data["NIGHT_SIMULATION"])
             self.assertEqual(view.status_code, 200)
-            view.close()
+            b"".join(view.streaming_content)
             wb = Workbook()
             write_sheet("sign", wb.active, [row])
             headers = [c.value for c in wb.active[1]]
@@ -557,6 +560,8 @@ class InventoryImageTests(TestCase):
             version = self.record.updated_at.isoformat()
             missing = self.client.post(review_url, data=json.dumps({"answer": "Yes", "version": version}), content_type="application/json")
             self.assertEqual(missing.status_code, 400)
+            attention = self.client.post(review_url, data=json.dumps({"answer": "No", "version": version}), content_type="application/json")
+            self.assertEqual(attention.status_code, 400)
             for slot in ("image", "night_simulation"):
                 response = self.client.post(upload_url, {"slot": slot, "image": self.image_upload("PNG", "blue")})
                 self.assertEqual(response.status_code, 200)
@@ -631,7 +636,7 @@ class InventoryImageTests(TestCase):
         self.assertContains(home, "openImageLightbox")
         self.assertContains(home, "setLightboxScale")
         self.assertNotContains(home, 'id="swap-records-btn"')
-        self.assertContains(home, "Insert below")
+        self.assertContains(home, "Insert new record below record")
         self.assertContains(home, "beginInsertBelow")
         self.assertContains(home, "insert_after_id")
         self.assertIn("img-src 'self' data: blob:", home["Content-Security-Policy"])
@@ -2229,7 +2234,7 @@ class ProjectJurisdictionMutcdTests(TestCase):
         )
         self.assertEqual(image_response.status_code, 200)
         self.assertEqual(image_response["Content-Type"], "image/png")
-        image_response.close()
+        b"".join(image_response.streaming_content)
 
     def test_project_country_state_cannot_change_after_selection(self):
         self.project.jurisdiction = self.nevada

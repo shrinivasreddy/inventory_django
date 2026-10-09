@@ -1,7 +1,10 @@
 """Review-only imports. Live records are created exclusively by approve()."""
 import csv
 import io
+import json
+from itertools import chain
 from collections import Counter
+from contextlib import ExitStack
 from datetime import date, datetime
 from urllib.parse import urlsplit
 
@@ -88,20 +91,26 @@ def normalize(key, values, columns=None):
     return data, parsed
 
 
-def uid(data):
-    return str(data.get("SIGN_UID", "") or "").strip().casefold()
+UID_FIELDS = {"sign": "SIGN_UID", "pavement": "PM_UID", "lane": "LANE_UID", "curb": "CURB_UID"}
+
+
+def fingerprint(data):
+    return json.dumps({k: v for k, v in data.items() if k != "ID" and v not in (None, "")}, sort_keys=True, default=str)
+
+
+def uid(data, key="sign"):
+    value = str(data.get(UID_FIELDS[key], "") or "").strip().casefold()
+    return value or "row:" + fingerprint(data)
 
 
 def flags_for(project, key):
-    if key != "sign":
-        return Counter(), set()
-    staged = Counter(uid(data) for data in StagedInventoryRecord.objects.filter(project=project, tab=key).values_list("data", flat=True) if uid(data))
-    live = {uid(data) for data in TabRecord.objects.filter(project=project, tab=key).values_list("data", flat=True) if uid(data)}
+    staged = Counter(uid(data, key) for data in StagedInventoryRecord.objects.filter(project=project, tab=key).values_list("data", flat=True))
+    live = {uid(data, key) for data in TabRecord.objects.filter(project=project, tab=key).values_list("data", flat=True)}
     return staged, live
 
 
 def row_payload(row, counts, live):
-    duplicate = bool(uid(row.data) and (counts[uid(row.data)] > 1 or uid(row.data) in live))
+    duplicate = bool(uid(row.data, row.tab) and (counts[uid(row.data, row.tab)] > 1 or uid(row.data, row.tab) in live))
     unclear = row.tab == "sign" and row.data.get("SIGN_CONDITION", "").strip() == "?"
     flags = []
     if duplicate:
@@ -109,8 +118,58 @@ def row_payload(row, counts, live):
     if unclear:
         flags.append("Flagged: Condition unclear (?)")
     return {"id": row.pk, "data": row.data, "status": "; ".join(flags) or "OK", "duplicate": duplicate,
-            "unclear": unclear, "live_duplicate": uid(row.data) in live, "source": row.source_file,
-            "source_row": row.source_row, "version": str(row.revision)}
+            "unclear": unclear, "live_duplicate": uid(row.data, row.tab) in live, "source": row.source_file,
+            "source_row": row.source_row, "version": str(row.revision), "duplicate_key": uid(row.data, row.tab), "uid_field": UID_FIELDS[row.tab]}
+
+
+def parse_sheet(iterator, key, project, owner, source):
+    columns = get_spec(key)["columns"]
+    headers = [str(value or "").strip() for value in next(iterator, [])]
+    aliases = {column.upper().replace("_", " "): column for column in get_spec(key)["columns"]}
+    aliases["NIGHT SIMULATION"] = "NIGHT_SIMULATION"
+    if key == "sign":
+        for name in ("NIGHT SIMULATION LINK", "NIGHT SIMULATION IMAGE", "NIGHT SIMULATION IMAGE LINK"):
+            aliases[name] = "_NIGHT_SIMULATION_LINK"
+        aliases["NIGHT SIMULATION VISIBILITY"] = VISIBILITY
+    if "ST_ID" in get_spec(key)["columns"]:
+        aliases["SECTION ID"] = "ST_ID"
+    if key == "curb":
+        aliases["CURB MARKING TYPE"] = "CURB_MARKING"
+    headers = [aliases.get(h.upper().replace("_", " "), h) for h in headers]
+    # Legacy pavement/lane sheets sometimes leave their final notes header blank.
+    if "COMMENT" in columns and "COMMENT" not in headers and headers and headers[-1] == "" and headers.count("") == 1:
+        headers[-1] = "COMMENT"
+    known = set(get_spec(key)["columns"])
+    if key == "sign":
+        known.add("_NIGHT_SIMULATION_LINK")
+    recognized_headers = [h for h in headers if h in known]
+    if not headers or len(set(recognized_headers)) != len(recognized_headers):
+        raise ValueError("The sheet has missing or duplicate column headers.")
+    if not any(h in known - {"ID"} for h in headers):
+        raise ValueError("No inventory columns were recognized. Use the selected inventory's Excel export headers.")
+    # Extra source columns are ignored; only configured inventory fields are saved.
+    pending = []
+    for line, values in enumerate(iterator, 2):
+        if line > 50001:
+            raise ValueError("The sheet exceeds the 50,000 scanned-row limit, including blank rows.")
+        if not any(value not in (None, "") for value in values):
+            continue
+        if any(value not in (None, "") for value in values[len(headers):]) or any(not header and index < len(values) and values[index] not in (None, "") for index, header in enumerate(headers)):
+            raise ValueError(f"Row {line}: data appears in a column without a header.")
+        if len(pending) >= 10000:
+            raise ValueError("Upload at most 10,000 rows per sheet.")
+        raw = {h: values[index] if index < len(values) else "" for index, h in enumerate(headers) if h in known}
+        if not any(value not in (None, "") for value in raw.values()):
+            continue
+        try:
+            data, inspection_date = normalize(key, raw, columns=columns)
+        except ValueError as exc:
+            raise ValueError(f"Row {line}: {exc}") from exc
+        pending.append(StagedInventoryRecord(project=project, owner=owner, tab=key, data=data,
+                       inspection_date=inspection_date, source_file=source[:255], source_row=line))
+    if not pending:
+        raise ValueError("The sheet contains no inventory rows.")
+    return pending
 
 
 @api_login_required
@@ -128,59 +187,80 @@ def staging(request, key):
     if upload.size > settings.MAX_XLSX_UPLOAD_BYTES:
         return JsonResponse({"error": "Inventory sheet exceeds the upload size limit."}, status=400)
     workbook = None
-    columns = get_spec(key)["columns"]
     try:
         if upload.name.lower().endswith(".xlsx"):
             validate_xlsx_upload(upload)
             workbook = load_workbook(upload, read_only=True, data_only=True)
-            sheet_name = get_spec(key)["export_sheet_name"]
-            sheet = workbook[sheet_name] if sheet_name in workbook.sheetnames else workbook.active
-            iterator = iter(sheet.iter_rows(values_only=True))
+            names = {get_spec(section)["export_sheet_name"].casefold(): section for section in TAB_ORDER}
+            names.update({section: section for section in TAB_ORDER})
+            names["sign_&_retro"] = "sign"
+            sheets = []
+            for sheet in workbook:
+                iterator = iter(sheet.iter_rows(values_only=True))
+                headers = next(iterator, ())
+                # Ignore genuinely empty worksheets, but never silently drop data.
+                first_data = None
+                for line, values in enumerate(iterator, 2):
+                    if line > 50001:
+                        raise ValueError(f"{sheet.title}: The sheet exceeds the 50,000 scanned-row limit.")
+                    if any(value not in (None, "") for value in values):
+                        first_data = (line, values)
+                        break
+                if first_data is None:
+                    continue
+                normalized = {str(value or "").strip().upper().replace(" ", "_") for value in headers}
+                indicators = {
+                    "sign": {"SIGN_UID", "POLE_ID", "SIGN_CONDITION", "SHEETING_MATERIAL"},
+                    "pavement": {"PM_UID", "PM_ID"},
+                    "lane": {"LANE_UID", "LM_ID"},
+                    "curb": {"CURB_UID", "CM_ID", "CURB_MARKING", "CURB_MARKING_TYPE"},
+                }
+                detected = [section for section, fields in indicators.items() if normalized & fields]
+                sheet_key = names.get(sheet.title.strip().casefold())
+                if len(detected) == 1:
+                    sheet_key = detected[0]
+                elif len(detected) > 1:
+                    raise ValueError(f"{sheet.title}: Columns contain multiple inventory types. Keep each type on a separate worksheet.")
+                if sheet_key is None:
+                    sheet_key = key
+                line, values = first_data
+                sheets.append((sheet_key, sheet.title, chain([headers], [()] * (line - 2), [values], iterator)))
+            if not sheets:
+                raise ValueError("The workbook contains no inventory rows.")
         elif upload.name.lower().endswith(".csv"):
-            iterator = iter(csv.reader(io.StringIO(upload.read().decode("utf-8-sig"))))
+            sheets = [(key, upload.name, iter(csv.reader(io.StringIO(upload.read().decode("utf-8-sig")))))]
         else:
             raise ValueError("Upload an XLSX or UTF-8 CSV file.")
-        headers = [str(value or "").strip() for value in next(iterator, [])]
-        aliases = {column.upper().replace("_", " "): column for column in get_spec(key)["columns"]}
-        aliases["NIGHT SIMULATION"] = "NIGHT_SIMULATION"
-        if key == "sign":
-            for name in ("NIGHT SIMULATION LINK", "NIGHT SIMULATION IMAGE", "NIGHT SIMULATION IMAGE LINK"):
-                aliases[name] = "_NIGHT_SIMULATION_LINK"
-            aliases["NIGHT SIMULATION VISIBILITY"] = VISIBILITY
-        if "ST_ID" in get_spec(key)["columns"]:
-            aliases["SECTION ID"] = "ST_ID"
-        headers = [aliases.get(h.upper().replace("_", " "), h) for h in headers]
-        known = set(get_spec(key)["columns"])
-        if key == "sign":
-            known.add("_NIGHT_SIMULATION_LINK")
-        if not headers or len(set(h for h in headers if h)) != len([h for h in headers if h]):
-            raise ValueError("The sheet has missing or duplicate column headers.")
-        if not any(h in known - {"ID"} for h in headers):
-            raise ValueError("No inventory columns were recognized. Use the selected inventory's Excel export headers.")
-        unknown = [h for h in headers if h and h not in known and h != "ADDED_BY"]
-        if unknown:
-            raise ValueError("Unrecognized columns: " + ", ".join(unknown[:10]))
         pending = []
-        for line, values in enumerate(iterator, 2):
-            if line > 50001:
-                raise ValueError("The sheet exceeds the 50,000 scanned-row limit, including blank rows.")
-            if not any(value not in (None, "") for value in values):
-                continue
-            if any(value not in (None, "") for value in values[len(headers):]) or any(not header and index < len(values) and values[index] not in (None, "") for index, header in enumerate(headers)):
-                raise ValueError(f"Row {line}: data appears in a column without a header.")
-            if len(pending) >= 10000:
-                raise ValueError("Upload at most 10,000 rows per sheet.")
-            raw = {h: values[index] if index < len(values) else "" for index, h in enumerate(headers) if h in known}
+        counts = Counter()
+        for sheet_key, title, iterator in sheets:
             try:
-                data, inspection_date = normalize(key, raw, columns=columns)
+                parsed = parse_sheet(iterator, sheet_key, project, request.user, upload.name)
             except ValueError as exc:
-                raise ValueError(f"Row {line}: {exc}") from exc
-            pending.append(StagedInventoryRecord(project=project, owner=request.user, tab=key, data=data,
-                           inspection_date=inspection_date, source_file=upload.name[:255], source_row=line))
-        if not pending:
-            raise ValueError("The sheet contains no inventory rows.")
-        with locks[key], transaction.atomic():
-            StagedInventoryRecord.objects.bulk_create(pending)
+                raise ValueError(f"{title}: {exc}") from exc
+            pending.extend(parsed)
+            counts[sheet_key] += len(parsed)
+        with ExitStack() as stack:
+            for section in TAB_ORDER:
+                if section in counts:
+                    stack.enter_context(locks[section])
+            with transaction.atomic():
+                existing = {
+                    section: {fingerprint(data) for data in StagedInventoryRecord.objects.filter(
+                        project=project, tab=section, owner=request.user
+                    ).values_list("data", flat=True)}
+                    for section in counts
+                }
+                skipped = Counter()
+                fresh = []
+                for row in pending:
+                    if fingerprint(row.data) in existing[row.tab]:
+                        skipped[row.tab] += 1
+                    else:
+                        fresh.append(row)
+                pending = fresh
+                counts = Counter(row.tab for row in pending)
+                StagedInventoryRecord.objects.bulk_create(pending)
     except (ValueError, ValidationError, UnicodeError, csv.Error) as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except Exception:
@@ -190,7 +270,7 @@ def staging(request, key):
     finally:
         if workbook is not None:
             workbook.close()
-    return JsonResponse({"imported": len(pending)}, status=201)
+    return JsonResponse({"imported": len(pending), "by_type": dict(counts), "skipped": sum(skipped.values()), "skipped_by_type": dict(skipped)}, status=201)
 
 
 @api_login_required
@@ -245,7 +325,7 @@ def approve(request, key):
     if error:
         return error
     selected = parse_json_body(request).get("rows")
-    if not isinstance(selected, list) or not selected or len(selected) > 10000 or any(not isinstance(item, dict) or not isinstance(item.get("id"), int) for item in selected):
+    if not isinstance(selected, list) or not selected or len(selected) > 10000 or any(not isinstance(item, dict) or type(item.get("id")) is not int for item in selected):
         return JsonResponse({"error": "Select staged rows to approve."}, status=400)
     versions = {item["id"]: item.get("version") for item in selected}
     with locks[key], transaction.atomic():

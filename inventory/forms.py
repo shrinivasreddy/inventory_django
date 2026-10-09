@@ -30,6 +30,7 @@ strict_email_widget = forms.EmailInput(
 
 
 class FrameRangeAssignmentForm(forms.ModelForm):
+    source_file = forms.ChoiceField(label="Source file", required=False)
     start_frame = forms.TypedChoiceField(
         coerce=int,
         label="Start Frame",
@@ -43,13 +44,13 @@ class FrameRangeAssignmentForm(forms.ModelForm):
 
     class Meta:
         model = FrameRangeAssignment
-        fields = ("project", "user", "start_frame", "end_frame")
+        fields = ("project", "tab", "source_file", "user", "start_frame", "end_frame")
 
     def __init__(self, *args, project=None, **kwargs):
         super().__init__(*args, **kwargs)
         selected_project = project or getattr(self.instance, "project", None)
         if selected_project is None:
-            project_id = self.data.get("project") if self.is_bound else self.initial.get("project")
+            project_id = self.data.get(self.add_prefix("project")) if self.is_bound else self.initial.get("project")
             if project_id:
                 selected_project = (
                     project_id
@@ -57,6 +58,16 @@ class FrameRangeAssignmentForm(forms.ModelForm):
                     else Project.objects.filter(pk=project_id).first()
                 )
         self.project = selected_project
+        if self.instance.pk and 'project' in self.fields:
+            self.fields['project'].disabled = True
+        from django.urls import reverse
+        self.fields['source_file'].widget.attrs.update({'data-endpoint':reverse('admin:inventory_framerangeassignment_available_options'), 'data-project':selected_project.pk if selected_project else '', 'data-assignment':self.instance.pk or ''})
+        tab = self.data.get(self.add_prefix("tab"), "sign") if self.is_bound else self.initial.get("tab", self.instance.tab)
+        source = self.data.get(self.add_prefix("source_file"), "") if self.is_bound else self.initial.get("source_file", self.instance.source_file)
+        sources = list(TabRecord.objects.filter(project=self.project, tab=tab, is_ai_processed=True).order_by("source_file").values_list("source_file", flat=True).distinct()) if self.project and self.project.pk else []
+        if self.instance.pk and self.instance.source_file not in sources:
+            sources.append(self.instance.source_file)
+        self.fields["source_file"].choices = [("", "Select source file / Legacy (unknown file)")] + [(s, s) for s in sources if s]
         if project is not None and "project" in self.fields:
             self.fields["project"].required = False
             self.fields["project"].initial = project.pk
@@ -67,7 +78,7 @@ class FrameRangeAssignmentForm(forms.ModelForm):
         if self.project and self.project.pk:
             self.fields["user"].queryset = self.project.members.order_by("username")
             assigned_ranges = list(
-                FrameRangeAssignment.objects.filter(project=self.project)
+                FrameRangeAssignment.objects.filter(project=self.project, tab=tab, source_file=source)
                 .exclude(pk=self.instance.pk)
                 .values_list("start_frame", "end_frame")
             )
@@ -85,10 +96,10 @@ class FrameRangeAssignmentForm(forms.ModelForm):
                 frame for frame in available
                 if not any(start <= frame <= end for start, end in assigned_ranges)
             ]
-            if self.instance.pk:
+            if self.instance.pk and self.instance.tab == tab and self.instance.source_file == source:
                 available.extend([self.instance.start_frame, self.instance.end_frame])
 
-        choices = [(frame, str(frame)) for frame in sorted(set(available))]
+        choices = [(frame, (source or "Legacy") + " · Frame " + str(frame)) for frame in sorted(set(available))]
         empty = [("", "Select an unassigned frame")]
         self.fields["start_frame"].choices = empty + choices
         self.fields["end_frame"].choices = empty + choices

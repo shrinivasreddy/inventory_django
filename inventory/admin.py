@@ -46,6 +46,7 @@ from .models import (
     Project,
     RegistrationApproval,
     TabRecord,
+    UserProfile,
 )
 from .specs import (
     AI_MARKER_FIELD, SIGN_AI_EXTRA_FIELDS, TAB_ORDER, compute_auto_fields,
@@ -71,7 +72,9 @@ class FrameRangeAssignmentInline(admin.TabularInline):
     form = FrameRangeAssignmentForm
     formset = FrameRangeAssignmentInlineFormSet
     extra = 1
-    fields = ("user", "start_frame", "end_frame")
+    fields = ("tab", "source_file", "user", "start_frame", "end_frame")
+    class Media:
+        js = ("inventory/js/frame-range-assignment.js",)
     autocomplete_fields = ("user",)
     verbose_name = "Frame range assignment"
     verbose_name_plural = "Frame range assignments"
@@ -232,7 +235,7 @@ class MutcdReferenceAdmin(admin.ModelAdmin):
 @admin.register(FrameRangeAssignment)
 class FrameRangeAssignmentAdmin(admin.ModelAdmin):
     form = FrameRangeAssignmentForm
-    list_display = ("project", "user", "frame_range", "created_on")
+    list_display = ("project", "tab", "source_file", "user", "frame_range", "created_on")
     list_filter = ("project", "user")
     search_fields = ("project__name", "project__code", "user__username", "user__email")
     ordering = ("project", "start_frame", "end_frame")
@@ -250,39 +253,25 @@ class FrameRangeAssignmentAdmin(admin.ModelAdmin):
         ] + super().get_urls()
 
     def get_readonly_fields(self, request, obj=None):
-        return ("project",) if obj else ()
+        return ()
 
     def available_options(self, request):
         if not self.has_add_permission(request):
             raise PermissionDenied
+        if not request.GET.get('project_id', '').isdigit():
+            return JsonResponse({'users':[], 'files':[], 'frames':[], 'frame_options':[]})
         project = Project.objects.filter(pk=request.GET.get("project_id")).first()
         if project is None:
             return JsonResponse({"users": [], "frames": []})
-        assigned_ranges = list(
-            FrameRangeAssignment.objects.filter(project=project).values_list(
-                "start_frame", "end_frame"
-            )
-        )
-        frames = list(
-            TabRecord.objects.filter(
-                project=project,
-                is_ai_processed=True,
-                ai_frame__isnull=False,
-            )
-            .order_by("ai_frame")
-            .values_list("ai_frame", flat=True)
-            .distinct()
-        )
-        frames = [
-            frame for frame in frames
-            if not any(start <= frame <= end for start, end in assigned_ranges)
-        ]
-        users = [
-            {"id": user.pk, "label": user.get_full_name().strip() or user.username}
-            for user in project.members.order_by("username")
-        ]
-        return JsonResponse({"users": users, "frames": frames})
-
+        data = {'project':project.pk, 'tab':request.GET.get('tab','sign'), 'source_file':request.GET.get('source_file','')}
+        assignment = FrameRangeAssignment.objects.filter(pk=request.GET.get('assignment_id'), project=project).first() if request.GET.get('assignment_id','').isdigit() else None
+        form = FrameRangeAssignmentForm(data=data, project=project, instance=assignment)
+        return JsonResponse({
+            'users':[{'id':user.pk,'label':user.get_full_name().strip() or user.username} for user in project.members.order_by('username')],
+            'files':[{'value':value,'label':label} for value,label in form.fields['source_file'].choices],
+            'frames':[value for value,label in form.fields['start_frame'].choices if value != ''],
+            'frame_options':[{'value':value,'label':label} for value,label in form.fields['start_frame'].choices if value != ''],
+        })
     @admin.display(description="Frame range", ordering="start_frame")
     def frame_range(self, obj):
         return f"{obj.start_frame}–{obj.end_frame}"
@@ -321,12 +310,72 @@ class BluedomeUserAdmin(DjangoUserAdmin):
         "first_name",
         "last_name",
         "approval_status",
+        "admin_role",
         "is_staff",
         "date_joined",
         "account_actions",
     )
     list_filter = ("is_active", "is_staff", "is_superuser", "date_joined")
-    actions = ("approve_selected_users", "deactivate_selected_users")
+    actions = ("approve_selected_users", "deactivate_selected_users", "grant_admin_access", "revoke_admin_access")
+
+    def is_owner_admin(self, request):
+        return request.user.is_superuser and not UserProfile.objects.filter(user=request.user, delegated_admin=True).exists()
+
+    @admin.display(description='Admin access')
+    def admin_role(self, obj):
+        if obj.is_superuser:
+            return 'Delegated superuser' if UserProfile.objects.filter(user=obj, delegated_admin=True).exists() else 'Administrator (protected)'
+        return 'Staff' if obj.is_staff else 'Regular user'
+
+    def protected_user(self, request, obj):
+        return obj is not None and not self.is_owner_admin(request) and (obj.is_staff or obj.is_superuser)
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = super().get_readonly_fields(request, obj)
+        if not self.is_owner_admin(request):
+            return tuple(fields) + ('is_staff', 'is_superuser', 'groups', 'user_permissions')
+        return fields
+
+    def has_change_permission(self, request, obj=None):
+        return not self.protected_user(request, obj) and super().has_change_permission(request, obj)
+
+    def has_delete_permission(self, request, obj=None):
+        return not self.protected_user(request, obj) and super().has_delete_permission(request, obj)
+
+    def delete_queryset(self, request, queryset):
+        if any(self.protected_user(request, user) for user in queryset):
+            raise PermissionDenied
+        super().delete_queryset(request, queryset)
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        if not self.is_owner_admin(request):
+            actions.pop('grant_admin_access', None)
+            actions.pop('revoke_admin_access', None)
+        return actions
+
+    @admin.action(description='Grant delegated superuser access')
+    def grant_admin_access(self, request, queryset):
+        if not self.is_owner_admin(request):
+            raise PermissionDenied
+        with transaction.atomic():
+            for user in queryset.filter(is_superuser=False, is_active=True).exclude(pk=request.user.pk):
+                UserProfile.objects.update_or_create(user=user, defaults={'delegated_admin': True})
+                user.is_staff = user.is_superuser = True
+                user.save(update_fields=['is_staff', 'is_superuser'])
+                self.log_change(request, user, 'Granted delegated superuser access.')
+        self.message_user(request, 'Granted admin access to selected active users. Existing administrators are unchanged.')
+
+    @admin.action(description='Revoke delegated superuser access')
+    def revoke_admin_access(self, request, queryset):
+        if not self.is_owner_admin(request):
+            raise PermissionDenied
+        with transaction.atomic():
+            for user in queryset.filter(inventory_profile__delegated_admin=True).exclude(pk=request.user.pk):
+                user.is_staff = user.is_superuser = False
+                user.save(update_fields=['is_staff', 'is_superuser'])
+                self.log_change(request, user, 'Revoked delegated superuser access.')
+        self.message_user(request, 'Delegated admin access revoked. These users retain their regular accounts.')
 
     @admin.display(description="Account status", ordering="is_active")
     def approval_status(self, obj):
@@ -374,9 +423,13 @@ class BluedomeUserAdmin(DjangoUserAdmin):
         return custom_urls + urls
 
     def pending_approval_count(self, request):
+        if not self.has_change_permission(request):
+            raise PermissionDenied
         return JsonResponse({"count": RegistrationApproval.objects.filter(status=RegistrationApproval.STATUS_PENDING).count()})
 
     def pending_approvals(self, request):
+        if not self.has_change_permission(request):
+            raise PermissionDenied
         pending = RegistrationApproval.objects.filter(status=RegistrationApproval.STATUS_PENDING).select_related("user")
         return render(request, "admin/auth/user/pending_approvals.html", {
             **self.admin_site.each_context(request), "title": "Pending user approvals", "pending_approvals": pending, "opts": self.model._meta,
@@ -384,6 +437,8 @@ class BluedomeUserAdmin(DjangoUserAdmin):
 
     def review_registration(self, request, user_id):
         approval = get_object_or_404(RegistrationApproval.objects.select_related("user"), user_id=user_id, status=RegistrationApproval.STATUS_PENDING)
+        if not self.has_change_permission(request, approval.user):
+            raise PermissionDenied
         if request.method == "POST":
             action = request.POST.get("action")
             if action == "approve":
@@ -421,6 +476,8 @@ class BluedomeUserAdmin(DjangoUserAdmin):
         if not self.has_change_permission(request):
             raise PermissionDenied
         user = get_object_or_404(User, pk=user_id)
+        if not self.has_change_permission(request, user):
+            raise PermissionDenied
         if not activate and (user.is_superuser or user.pk == request.user.pk):
             messages.error(request, "The current administrator or a superuser cannot be deactivated here.")
             return redirect("admin:auth_user_changelist")
@@ -456,10 +513,14 @@ class BluedomeUserAdmin(DjangoUserAdmin):
 
     @admin.action(description="Approve selected users and send activation email")
     def approve_selected_users(self, request, queryset):
+        if not self.has_change_permission(request):
+            raise PermissionDenied
         approved = 0
         delivered = 0
         failures = []
         for user in queryset.filter(is_active=False):
+            if not self.has_change_permission(request, user):
+                continue
             user._skip_approval_email = True
             user.is_active = True
             user.save(update_fields=["is_active"])
@@ -484,11 +545,15 @@ class BluedomeUserAdmin(DjangoUserAdmin):
 
     @admin.action(description="Deactivate selected users")
     def deactivate_selected_users(self, request, queryset):
+        if not self.has_change_permission(request):
+            raise PermissionDenied
         eligible = queryset.filter(is_active=True, is_superuser=False).exclude(pk=request.user.pk)
         deactivated = 0
         delivered = 0
         failures = []
         for user in eligible:
+            if not self.has_change_permission(request, user):
+                continue
             user._skip_deactivation_email = True
             user.is_active = False
             user.save(update_fields=["is_active"])
@@ -1028,7 +1093,7 @@ class InventoryDateAddedFilter(admin.ListFilter):
 @admin.register(TabRecord)
 class TabRecordAdmin(admin.ModelAdmin):
     AI_DUPLICATE_FIELDS = ("FRAME", "X1", "X2", "ELEVATION", "IMAGE")
-    list_display = ("record_id", "username", "tab", "date_added")
+    list_display = ("record_id", "username", "tab", "source_file", "ai_frame", "date_added")
     list_filter = (
         InventoryUsernameFilter,
         InventorySectionFilter,
@@ -1186,7 +1251,7 @@ class TabRecordAdmin(admin.ModelAdmin):
         ]
 
     def import_ai_processed(self, request):
-        if not request.user.is_staff:
+        if not self.has_add_permission(request) or not self.has_change_permission(request):
             raise PermissionDenied
         project = self._selected_project(request)
         if project is None:
@@ -1262,11 +1327,11 @@ class TabRecordAdmin(admin.ModelAdmin):
                                     for record in TabRecord.objects.filter(
                                         project=project, tab="sign"
                                     ).only(
-                                        "pk", "data", "updated_at", "is_ai_processed", "ai_frame"
+                                        "pk", "data", "updated_at", "is_ai_processed", "ai_frame", "source_file"
                                     ):
                                         if record.is_ai_processed:
                                             existing_by_key.setdefault(
-                                                self._ai_duplicate_key(record.data or {}), record
+                                                (record.source_file, self._ai_duplicate_key(record.data or {})), record
                                             )
 
                                     new_by_key = {}
@@ -1278,7 +1343,7 @@ class TabRecordAdmin(admin.ModelAdmin):
                                         "_AI_SOURCE_FILE", *SIGN_AI_EXTRA_FIELDS,
                                     }
                                     for data in pending_rows:
-                                        key = self._ai_duplicate_key(data)
+                                        key = (data.get("_AI_SOURCE_FILE", ""), self._ai_duplicate_key(data))
                                         existing = existing_by_key.get(key)
                                         if existing is not None:
                                             merged = dict(existing.data or {})
@@ -1286,6 +1351,7 @@ class TabRecordAdmin(admin.ModelAdmin):
                                             existing.data = merged
                                             existing.is_ai_processed = True
                                             existing.ai_frame = self._ai_frame_value(data)
+                                            existing.source_file = data.get("_AI_SOURCE_FILE", "")
                                             existing.updated_at = timezone.now()
                                             changed_by_pk[existing.pk] = existing
                                             updated_count += 1
@@ -1301,7 +1367,7 @@ class TabRecordAdmin(admin.ModelAdmin):
                                         record = TabRecord(
                                             project=project, owner=None, tab="sign", data=data,
                                             is_ai_processed=True,
-                                            ai_frame=self._ai_frame_value(data),
+                                            ai_frame=self._ai_frame_value(data), source_file=data.get("_AI_SOURCE_FILE", ""),
                                         )
                                         new_by_key[key] = record
                                         new_rows.append(record)
@@ -1309,7 +1375,7 @@ class TabRecordAdmin(admin.ModelAdmin):
                                     if changed_by_pk:
                                         TabRecord.objects.bulk_update(
                                             changed_by_pk.values(),
-                                            ["data", "is_ai_processed", "ai_frame", "updated_at"],
+                                            ["data", "is_ai_processed", "ai_frame", "source_file", "updated_at"],
                                         )
 
                                     max_id = TabRecord.objects.filter(tab="sign").aggregate(
@@ -1344,7 +1410,7 @@ class TabRecordAdmin(admin.ModelAdmin):
         })
 
     def ai_filter_settings(self, request):
-        if not request.user.is_staff:
+        if not self.has_change_permission(request):
             raise PermissionDenied
         project = self._selected_project(request)
         if project is None:
@@ -1414,8 +1480,7 @@ class TabRecordAdmin(admin.ModelAdmin):
                     headers = [self._excel_value(value) for value in raw_headers]
                     while headers and not headers[-1]:
                         headers.pop()
-                    duplicate_headers = {header for header in headers if header and headers.count(header) > 1}
-                    unknown_headers = [header for header in headers if header and header not in spec["columns"]]
+                    duplicate_headers = {header for header in headers if header in spec["columns"] and headers.count(header) > 1}
                     missing_uid_headers = [field for field in spec["uid_parts"] if field not in headers]
 
                     errors = []
@@ -1423,8 +1488,6 @@ class TabRecordAdmin(admin.ModelAdmin):
                         errors.append("The workbook does not contain a header row.")
                     if duplicate_headers:
                         errors.append("Duplicate headers: " + ", ".join(sorted(duplicate_headers)))
-                    if unknown_headers:
-                        errors.append("Unknown headers: " + ", ".join(unknown_headers))
                     if missing_uid_headers:
                         errors.append("Required headers are missing: " + ", ".join(missing_uid_headers))
 
@@ -1450,6 +1513,8 @@ class TabRecordAdmin(admin.ModelAdmin):
                                 for column in spec["columns"]
                                 if column != "ID"
                             }
+                            if not any(value for value in row.values()):
+                                continue
                             row = compute_auto_fields(section_key, row, state)
                             row["IMAGE_LINK"] = ""
                             missing = missing_required_fields(section_key, row)
@@ -1517,6 +1582,8 @@ class TabRecordAdmin(admin.ModelAdmin):
         return render(request, "admin/inventory/tabrecord/import_excel.html", context)
 
     def excel_template(self, request):
+        if not self.has_view_permission(request):
+            raise PermissionDenied
         workbook = Workbook()
         workbook.remove(workbook.active)
         for section_key in TAB_ORDER:
@@ -1533,6 +1600,8 @@ class TabRecordAdmin(admin.ModelAdmin):
         return response
 
     def export_excel(self, request):
+        if not self.has_view_permission(request):
+            raise PermissionDenied
         project = self._selected_project(request)
         if project is None:
             messages.warning(request, "Select an active project from the main inventory page first.")
